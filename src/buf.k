@@ -19,6 +19,7 @@ func bufNewEmpty() {
     let b = envNew()
     b = envSet(b, "path", "")
     b = envSet(b, "text", "")
+    b = envSet(b, "savedText", "")   // text last saved to disk (drives dirty flag)
     b = envSet(b, "row", 0)
     b = envSet(b, "col", 0)
     b = envSet(b, "scrollRow", 0)
@@ -36,16 +37,29 @@ func bufLoad(path) {
     let raw = readFile(path)
     b = envSet(b, "path", path)
     b = envSet(b, "text", raw)
+    b = envSet(b, "savedText", raw)
     emit b
 }
 
 func bufSave(b) {
     let p = envGet(b, "path")
     if p == "" { emit b }
-    let ok = writeFile(p, envGet(b, "text"))
+    let cur = envGet(b, "text")
+    let ok = writeFile(p, cur)
     if ok == "1" {
+        b = envSet(b, "savedText", cur)
         b = envSet(b, "dirty", 0)
         b = envSet(b, "atBoundary", 1)
+    }
+    emit b
+}
+
+// Recompute dirty by comparing against last-saved text. Cheap call.
+func _recomputeDirty(b) {
+    if envGet(b, "text") == envGet(b, "savedText") {
+        b = envSet(b, "dirty", 0)
+    } else {
+        b = envSet(b, "dirty", 1)
     }
     emit b
 }
@@ -173,7 +187,7 @@ func _restoreSnap(b, snap) {
     b = envSet(b, "row", row)
     b = envSet(b, "col", col)
     b = envSet(b, "goalCol", col)
-    b = envSet(b, "dirty", 1)
+    b = _recomputeDirty(b)
     emit b
 }
 

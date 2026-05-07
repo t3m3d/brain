@@ -44,10 +44,12 @@ cfunc {
     static void kr_term_restore_internal(void) {
         if (g_have_orig && g_in_raw) {
             // Show cursor, leave alt screen, restore cooked mode.
+            // Set the flag FIRST so signal handlers / atexit don't double-fire.
+            g_in_raw = 0;
             const char *seq = "\x1b[?25h\x1b[?1049l";
             write(STDOUT_FILENO, seq, strlen(seq));
-            tcsetattr(STDIN_FILENO, TCSAFLUSH, &g_orig_termios);
-            g_in_raw = 0;
+            // TCSANOW — TCSAFLUSH was hanging in some pty configurations.
+            tcsetattr(STDIN_FILENO, TCSANOW, &g_orig_termios);
         }
     }
 
@@ -310,8 +312,8 @@ func kcodeMain() {
     let openFile = ""
     let treeRoot = "."
     if path != "" {
-        let isDir = startsWith(shellRun("test -d \"" + path + "\" && echo 1 || echo 0"), "1")
-        if isDir == "1" {
+        // shellRun returns system(3)'s exit status; test -d returns 0 when path is a dir.
+        if shellRun("test -d \"" + path + "\"") == "0" {
             treeRoot = path
         } else {
             openFile = path

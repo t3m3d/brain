@@ -172,6 +172,10 @@ func edNew(initialPath, treeRoot) {
     e = envSet(e, "overlay", "")
     e = envSet(e, "overlayTitle", "")
     e = envSet(e, "overlayScroll", 0)
+    e = envSet(e, "pkOpen", 0)
+    e = envSet(e, "pkFiles", "")
+    e = envSet(e, "pkQuery", "")
+    e = envSet(e, "pkCursor", 0)
     emit e
 }
 
@@ -349,6 +353,143 @@ func _renderOverlay(e, sb) {
     emit sb
 }
 
+// ── File picker (Ctrl-P) ────────────────────────────────────────
+
+func _pkFilter(files, query) {
+    if query == "" { emit files }
+    let q = toLower(query)
+    let n = lineCount(files)
+    let i = 0
+    let out = ""
+    while i < n {
+        let line = getLine(files, i)
+        if contains(toLower(line), q) == "1" {
+            if out == "" { out = line } else { out = out + "\n" + line }
+        }
+        i += 1
+    }
+    emit out
+}
+
+func _renderPicker(e, sb) {
+    let rows = toInt(envGet(e, "rows"))
+    let cols = toInt(envGet(e, "cols"))
+    let q = envGet(e, "pkQuery")
+    let files = envGet(e, "pkFiles")
+    let filtered = _pkFilter(files, q)
+    let total = lineCount(filtered)
+    if filtered == "" { total = 0 }
+    let cursor = toInt(envGet(e, "pkCursor"))
+    if cursor >= total { cursor = total - 1 }
+    if cursor < 0 { cursor = 0 }
+
+    sb = sbAppend(sb, _at(0, 0))
+    sb = sbAppend(sb, _statusBgActive())
+    let header = "  open file    [type to filter · ↑↓ select · Enter open · ESC dismiss]"
+    if len(header) > cols { header = substring(header, 0, cols) }
+    sb = sbAppend(sb, header)
+    let hp = 0
+    while hp < cols - len(header) { sb = sbAppend(sb, " "); hp += 1 }
+    sb = sbAppend(sb, _reset())
+
+    sb = sbAppend(sb, _at(1, 0))
+    sb = sbAppend(sb, _esc() + "[38;5;220m▸ " + _reset() + q)
+    sb = sbAppend(sb, _dim() + "  (" + total + " match)" + _reset())
+    sb = sbAppend(sb, _clearEol())
+
+    let viewRows = rows - 4
+    let i = 0
+    while i < viewRows {
+        sb = sbAppend(sb, _at(i + 2, 0))
+        if i < total {
+            let line = getLine(filtered, i)
+            if i == cursor {
+                sb = sbAppend(sb, _esc() + "[48;5;238m" + _esc() + "[38;5;230m  " + line)
+                let pad = cols - len(line) - 2
+                let pp = 0
+                while pp < pad { sb = sbAppend(sb, " "); pp += 1 }
+                sb = sbAppend(sb, _reset())
+            } else {
+                sb = sbAppend(sb, "  " + line)
+                sb = sbAppend(sb, _clearEol())
+            }
+        } else {
+            sb = sbAppend(sb, _clearEol())
+        }
+        i += 1
+    }
+    emit sb
+}
+
+// shellRun returns system(3)'s status, not stdout — capture via a temp file.
+func _shellCapture(cmd) {
+    shellRun(cmd + " > /tmp/_kcode_sh.out 2>&1")
+    let r = readFile("/tmp/_kcode_sh.out")
+    deleteFile("/tmp/_kcode_sh.out")
+    emit r
+}
+
+func _pkOpen(e) {
+    let listing = _shellCapture("find . -maxdepth 8 -type f -not -path '*/.*' | sed 's|^./||' | sort | head -5000")
+    e = envSet(e, "pkOpen", 1)
+    e = envSet(e, "pkFiles", listing)
+    e = envSet(e, "pkQuery", "")
+    e = envSet(e, "pkCursor", 0)
+    emit e
+}
+
+func _pkClose(e) {
+    e = envSet(e, "pkOpen", 0)
+    e = envSet(e, "pkFiles", "")
+    e = envSet(e, "pkQuery", "")
+    e = envSet(e, "pkCursor", 0)
+    emit e
+}
+
+func _handlePickerKey(e, k) {
+    if k == "ESC" || k == "C-g" { e = _pkClose(e); emit e }
+    if k == "ENTER" {
+        let filtered = _pkFilter(envGet(e, "pkFiles"), envGet(e, "pkQuery"))
+        let cursor = toInt(envGet(e, "pkCursor"))
+        let total = lineCount(filtered)
+        if filtered == "" { total = 0 }
+        if cursor >= total { cursor = total - 1 }
+        if cursor < 0 { e = _pkClose(e); emit e }
+        let path = getLine(filtered, cursor)
+        e = envSet(e, "buf", bufLoad(path))
+        e = _setMsg(e, "opened " + path, "ok")
+        e = _pkClose(e); emit e
+    }
+    if k == "UP" {
+        let c = toInt(envGet(e, "pkCursor"))
+        if c > 0 { c -= 1 }
+        e = envSet(e, "pkCursor", c); emit e
+    }
+    if k == "DOWN" {
+        let c = toInt(envGet(e, "pkCursor"))
+        c += 1
+        e = envSet(e, "pkCursor", c); emit e
+    }
+    if k == "BACKSPACE" {
+        let s = envGet(e, "pkQuery")
+        if len(s) > 0 { e = envSet(e, "pkQuery", substring(s, 0, len(s) - 1)) }
+        e = envSet(e, "pkCursor", 0); emit e
+    }
+    if len(k) == 1 {
+        let cc = charCode(k)
+        if cc >= 32 && cc < 127 {
+            e = envSet(e, "pkQuery", envGet(e, "pkQuery") + k)
+            e = envSet(e, "pkCursor", 0); emit e
+        }
+    } else {
+        if charCode(k[0]) >= 128 {
+            e = envSet(e, "pkQuery", envGet(e, "pkQuery") + k)
+            e = envSet(e, "pkCursor", 0); emit e
+        }
+    }
+    emit e
+}
+
 func edRender(e) {
     let sz = tSize()
     let comma = indexOf(sz, ",")
@@ -367,7 +508,11 @@ func edRender(e) {
 
     let sb = sbNew()
     sb = sbAppend(sb, _hide())
-    if envGet(e, "overlay") != "" {
+    if toInt(envGet(e, "pkOpen")) == 1 {
+        sb = _renderPicker(e, sb)
+        sb = sbAppend(sb, _at(1, 2 + len(envGet(e, "pkQuery"))))
+        sb = sbAppend(sb, _show())
+    } else if envGet(e, "overlay") != "" {
         sb = _renderOverlay(e, sb)
         sb = _renderStatus(e, sb)
         sb = _renderMinibuffer(e, sb)
@@ -470,11 +615,11 @@ func _runBuild(e, alsoExecute) {
         e = envSet(e, "buf", b)
     }
     let bin = "/tmp/_kcode_run_bin"
-    let buildOut = shellRun("kcc.sh " + path + " -o " + bin + " 2>&1")
+    let buildOut = _shellCapture("kcc.sh " + path + " -o " + bin)
     let title = "BUILD: " + path
     let body = buildOut
     if alsoExecute == 1 {
-        let runOut = shellRun("test -x " + bin + " && " + bin + " 2>&1; echo \"[exit $?]\"")
+        let runOut = _shellCapture("test -x " + bin + " && " + bin + "; echo \"[exit $?]\"")
         body = buildOut + "\n────────── output ──────────\n" + runOut
         title = "BUILD+RUN: " + path
     }
@@ -536,6 +681,7 @@ func _handleEditorKey(e, k) {
         e = _setMsg(e, "find next: " + needle, "ok"); emit e
     }
     if k == "C-l" { e = _enterPrompt(e, "go-to-line", "goto line: ", ""); emit e }
+    if k == "C-p" { e = _pkOpen(e); emit e }
     if k == "C-z" { b = bufUndo(b); e = envSet(e, "buf", b); e = _setMsg(e, "undo", ""); emit e }
     if k == "C-y" { b = bufRedo(b); e = envSet(e, "buf", b); e = _setMsg(e, "redo", ""); emit e }
     if k == "C-b" { e = _runBuild(e, 0); emit e }
@@ -607,6 +753,8 @@ func edRun(e) {
         let k = tReadKey()
         if k == "EOF" {
             e = envSet(e, "running", 0)
+        } else if toInt(envGet(e, "pkOpen")) == 1 {
+            e = _handlePickerKey(e, k)
         } else if envGet(e, "overlay") != "" {
             e = _handleOverlayKey(e, k)
         } else if envGet(e, "focus") == "prompt" {
