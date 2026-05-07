@@ -8,7 +8,7 @@ krypton-lang's first IDE — a terminal editor written in Krypton, compiled via 
 ./build.sh
 ```
 
-Produces `./kcode` (≈140 KB on macOS arm64). Requires `kcc` 1.8.0+ on PATH.
+Produces `./kcode` (≈170 KB on macOS arm64). Requires `kcc` 1.8.0+ on PATH.
 
 ## Run
 
@@ -17,23 +17,43 @@ Produces `./kcode` (≈140 KB on macOS arm64). Requires `kcc` 1.8.0+ on PATH.
 ./kcode path/to/file.k   # open a file
 ```
 
+## Run as a macOS app (.app bundle)
+
+```sh
+./make-app.sh            # produces dist/kcode.app
+open dist/kcode.app      # double-clickable launch in Terminal.app
+open dist/kcode.app src/buf.k    # opens with a file
+cp -R dist/kcode.app /Applications/   # install
+```
+
+Right-click → Open With → kcode also works for `.k` files (the bundle
+declares itself as a default editor for the `k` extension via
+`CFBundleDocumentTypes`).  `lsregister` runs at the end of
+`make-app.sh` to refresh Launch Services so this kicks in immediately.
+
 ## Key bindings
 
-| keys                    | action                                       |
-|-------------------------|----------------------------------------------|
-| ←/→ ↑/↓ Home/End        | cursor movement                              |
-| PageUp / PageDown       | jump-scroll                                  |
-| printable / Tab / Enter | insert (Tab → 4 spaces)                      |
-| Backspace / Delete      | delete                                       |
-| Ctrl-Z / Ctrl-Y         | undo / redo                                  |
-| Ctrl-S                  | save (prompts for path if buffer is unnamed) |
-| Ctrl-O                  | open file (prompts for path)                 |
-| **Ctrl-P**              | **fuzzy file picker** (recursive in cwd)     |
-| Ctrl-F / Ctrl-G         | find / find next                             |
-| Ctrl-L                  | go to line                                   |
-| Ctrl-B / Ctrl-R         | build / build+run via `kcc.sh`               |
-| Ctrl-Q                  | quit (warns on unsaved changes)              |
-| ESC                     | dismiss prompt, picker, or build overlay     |
+| keys                    | action                                            |
+|-------------------------|---------------------------------------------------|
+| ←/→ ↑/↓ Home/End        | cursor movement                                   |
+| PageUp / PageDown       | jump-scroll                                       |
+| **mouse click**         | position cursor at click (editor pane)            |
+| **mouse wheel**         | scroll buffer 3 lines per tick                    |
+| printable / Tab / Enter | insert (Tab → 4 spaces)                           |
+| Backspace / Delete      | delete                                            |
+| Ctrl-Z / Ctrl-Y         | undo / redo (per word — space/Enter ends a group) |
+| Ctrl-S                  | save (prompts for path if buffer is unnamed)      |
+| Ctrl-O                  | open file (prompts for path)                      |
+| Ctrl-P                  | fuzzy file picker (recursive in cwd)              |
+| **Alt-n / Alt-p**       | **cycle to next / previous open buffer**          |
+| **Ctrl-W**              | **close current buffer**                          |
+| Ctrl-F / Ctrl-G         | find / find next                                  |
+| Ctrl-L                  | go to line                                        |
+| Ctrl-B / Ctrl-R         | build / build+run via `kcc.sh`                    |
+| Ctrl-Q                  | quit (warns on unsaved changes)                   |
+| ESC                     | dismiss prompt, picker, or build overlay          |
+
+The status bar shows `[i/N]` when more than one buffer is open.
 
 ## Layout
 

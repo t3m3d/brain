@@ -308,6 +308,11 @@ func bufInsertChar(b, ch) {
     let t = envGet(b, "text")
     b = bufReplaceText(b, bufSplice(t, off, off, ch), off + len(ch))
     b = envSet(b, "dirty", 1)
+    // Word-boundary breaks the undo group so each "word" lands on its own
+    // undo step. Without this, undo rewinds an entire typing burst at once.
+    if ch == " " || ch == "\n" || ch == "\t" {
+        b = envSet(b, "atBoundary", 1)
+    }
     emit b
 }
 

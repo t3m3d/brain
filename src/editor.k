@@ -176,6 +176,8 @@ func edNew(initialPath, treeRoot) {
     e = envSet(e, "pkFiles", "")
     e = envSet(e, "pkQuery", "")
     e = envSet(e, "pkCursor", 0)
+    e = envSet(e, "bufList", "")
+    if initialPath != "" { e = envSet(e, "bufList", initialPath) }
     emit e
 }
 
@@ -277,7 +279,14 @@ func _renderStatus(e, sb) {
     let totalLines = bufNumLines(b)
     let mode = "EDIT"
     if envGet(e, "focus") == "prompt" { mode = "PROMPT" }
-    let left = " " + mode + " " + path + dirty + " "
+    let bufList = envGet(e, "bufList")
+    let nBufs = lineCount(bufList)
+    if bufList == "" { nBufs = 0 }
+    let bufIdx = _bufListIndex(bufList, envGet(b, "path"))
+    let bufTag = ""
+    if nBufs > 1 { bufTag = "  [" + (bufIdx + 1) + "/" + nBufs + "]" }
+
+    let left = " " + mode + " " + path + dirty + bufTag + " "
     let right = " L" + row + ":C" + col + "  " + row + "/" + totalLines + " "
     let mid = ""
     let need = cols - len(left) - len(right)
@@ -446,6 +455,121 @@ func _pkClose(e) {
     emit e
 }
 
+// ── Multi-buffer ────────────────────────────────────────────────
+//
+// Storage: each non-current buffer lives at env key "buf:<path>".
+// The current buffer stays at "buf". `bufList` is a \n-separated list
+// of paths in the order buffers were opened.
+
+func _bufListContains(list, path) {
+    if list == "" { emit 0 }
+    let n = lineCount(list)
+    let i = 0
+    while i < n {
+        if getLine(list, i) == path { emit 1 }
+        i += 1
+    }
+    emit 0
+}
+
+func _bufListIndex(list, path) {
+    if list == "" { emit -1 }
+    let n = lineCount(list)
+    let i = 0
+    while i < n {
+        if getLine(list, i) == path { emit i }
+        i += 1
+    }
+    emit -1
+}
+
+func _bufListAdd(list, path) {
+    if list == "" { emit path }
+    if _bufListContains(list, path) == 1 { emit list }
+    emit list + "\n" + path
+}
+
+func _bufListRemove(list, path) {
+    let n = lineCount(list)
+    let i = 0
+    let out = ""
+    while i < n {
+        let p = getLine(list, i)
+        if p != path {
+            if out == "" { out = p } else { out = out + "\n" + p }
+        }
+        i += 1
+    }
+    emit out
+}
+
+// Open `path` in a new buffer slot. If the current buffer is empty &
+// unnamed, replace it instead of growing the list.
+func edOpenBuffer(e, path) {
+    if path == "" { emit e }
+    let b = envGet(e, "buf")
+    let curPath = envGet(b, "path")
+    let curText = envGet(b, "text")
+    if curPath == "" && curText == "" {
+        e = envSet(e, "buf", bufLoad(path))
+        e = envSet(e, "bufList", _bufListAdd(envGet(e, "bufList"), path))
+        emit e
+    }
+    // Stash current under its path, then open new.
+    if curPath != "" {
+        e = envSet(e, "buf:" + curPath, b)
+    }
+    // bufList already contains `path` only if we've opened it before;
+    // checking here avoids the noisy "undefined variable" envGet warning
+    // for the first-open case.
+    let known = _bufListContains(envGet(e, "bufList"), path)
+    if known == 1 {
+        e = envSet(e, "buf", envGet(e, "buf:" + path))
+    } else {
+        e = envSet(e, "buf", bufLoad(path))
+    }
+    e = envSet(e, "bufList", _bufListAdd(envGet(e, "bufList"), path))
+    emit e
+}
+
+// Cycle to next/prev buffer in bufList. step = +1 or -1.
+func edCycleBuffer(e, step) {
+    let list = envGet(e, "bufList")
+    let n = lineCount(list)
+    if list == "" || n < 2 { emit e }
+    let cur = envGet(envGet(e, "buf"), "path")
+    let idx = _bufListIndex(list, cur)
+    if idx < 0 { idx = 0 }
+    let nextIdx = idx + step
+    if nextIdx < 0 { nextIdx = n - 1 }
+    if nextIdx >= n { nextIdx = 0 }
+    let nextPath = getLine(list, nextIdx)
+    if nextPath == cur { emit e }
+    e = envSet(e, "buf:" + cur, envGet(e, "buf"))
+    e = envSet(e, "buf", envGet(e, "buf:" + nextPath))
+    emit e
+}
+
+// Close current buffer. If last, drop to an empty buffer.
+func edCloseBuffer(e) {
+    let b = envGet(e, "buf")
+    let curPath = envGet(b, "path")
+    let list = envGet(e, "bufList")
+    if list == "" {
+        e = envSet(e, "buf", bufNewEmpty())
+        emit e
+    }
+    let newList = _bufListRemove(list, curPath)
+    e = envSet(e, "bufList", newList)
+    if newList == "" {
+        e = envSet(e, "buf", bufNewEmpty())
+        emit e
+    }
+    let nextPath = getLine(newList, 0)
+    e = envSet(e, "buf", envGet(e, "buf:" + nextPath))
+    emit e
+}
+
 func _handlePickerKey(e, k) {
     if k == "ESC" || k == "C-g" { e = _pkClose(e); emit e }
     if k == "ENTER" {
@@ -456,7 +580,7 @@ func _handlePickerKey(e, k) {
         if cursor >= total { cursor = total - 1 }
         if cursor < 0 { e = _pkClose(e); emit e }
         let path = getLine(filtered, cursor)
-        e = envSet(e, "buf", bufLoad(path))
+        e = edOpenBuffer(e, path)
         e = _setMsg(e, "opened " + path, "ok")
         e = _pkClose(e); emit e
     }
@@ -576,7 +700,7 @@ func _submitPrompt(e) {
     }
     if kind == "open" {
         if inp == "" { e = _exitPrompt(e); emit e }
-        e = envSet(e, "buf", bufLoad(inp))
+        e = edOpenBuffer(e, inp)
         e = _setMsg(e, "opened " + inp, "ok")
         e = _exitPrompt(e); emit e
     }
@@ -682,11 +806,62 @@ func _handleEditorKey(e, k) {
     }
     if k == "C-l" { e = _enterPrompt(e, "go-to-line", "goto line: ", ""); emit e }
     if k == "C-p" { e = _pkOpen(e); emit e }
+    if k == "M-n" { e = edCycleBuffer(e, 1);  emit e }
+    if k == "M-p" { e = edCycleBuffer(e, 0 - 1); emit e }
+    if k == "C-w" {
+        let bb = envGet(e, "buf")
+        if toInt(envGet(bb, "dirty")) == 1 {
+            e = _setMsg(e, "buffer is dirty — save (Ctrl-S) first or undo your changes", "err")
+            emit e
+        }
+        e = edCloseBuffer(e); emit e
+    }
     if k == "C-z" { b = bufUndo(b); e = envSet(e, "buf", b); e = _setMsg(e, "undo", ""); emit e }
     if k == "C-y" { b = bufRedo(b); e = envSet(e, "buf", b); e = _setMsg(e, "redo", ""); emit e }
     if k == "C-b" { e = _runBuild(e, 0); emit e }
     if k == "C-r" { e = _runBuild(e, 1); emit e }
     if k == "ESC" { e = envSet(e, "message", ""); emit e }
+
+    // Mouse: scroll wheel works in editor mode regardless of focus.
+    if k == "WHEEL-UP" {
+        b = bufMoveUp(b); b = bufMoveUp(b); b = bufMoveUp(b)
+        e = envSet(e, "buf", b); emit e
+    }
+    if k == "WHEEL-DOWN" {
+        b = bufMoveDown(b); b = bufMoveDown(b); b = bufMoveDown(b)
+        e = envSet(e, "buf", b); emit e
+    }
+    // MOUSE\t<row>\t<col>\t<btn>: position cursor at click target.
+    if startsWith(k, "MOUSE\t") == "1" {
+        let rows = toInt(envGet(e, "rows"))
+        let tab1 = indexOf(k, "\t")
+        let rest = substring(k, tab1 + 1, len(k))
+        let tab2 = indexOf(rest, "\t")
+        let mr = toInt(substring(rest, 0, tab2))
+        let rest2 = substring(rest, tab2 + 1, len(rest))
+        let tab3 = indexOf(rest2, "\t")
+        let mc = toInt(substring(rest2, 0, tab3))
+        // Ignore clicks on the status / minibuffer rows.
+        if mr < rows - 2 {
+            let gutterW = _gutterWidth(b)
+            let scrollRow = toInt(envGet(b, "scrollRow"))
+            let scrollCol = toInt(envGet(b, "scrollCol"))
+            let targetRow = scrollRow + mr
+            let nl = bufNumLines(b)
+            if targetRow >= nl { targetRow = nl - 1 }
+            if targetRow < 0 { targetRow = 0 }
+            let targetCol = mc - gutterW + scrollCol
+            if targetCol < 0 { targetCol = 0 }
+            let ll = bufLineLen(b, targetRow)
+            if targetCol > ll { targetCol = ll }
+            b = envSet(b, "row", targetRow)
+            b = envSet(b, "col", targetCol)
+            b = envSet(b, "goalCol", targetCol)
+            b = bufMarkBoundary(b)
+            e = envSet(e, "buf", b)
+        }
+        emit e
+    }
 
     if len(k) == 1 {
         let cc = charCode(k)

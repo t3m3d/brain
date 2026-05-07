@@ -43,10 +43,10 @@ cfunc {
 
     static void kr_term_restore_internal(void) {
         if (g_have_orig && g_in_raw) {
-            // Show cursor, leave alt screen, restore cooked mode.
             // Set the flag FIRST so signal handlers / atexit don't double-fire.
             g_in_raw = 0;
-            const char *seq = "\x1b[?25h\x1b[?1049l";
+            // Disable mouse reporting, show cursor, leave alt screen.
+            const char *seq = "\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l";
             write(STDOUT_FILENO, seq, strlen(seq));
             // TCSANOW — TCSAFLUSH was hanging in some pty configurations.
             tcsetattr(STDIN_FILENO, TCSANOW, &g_orig_termios);
@@ -75,8 +75,10 @@ cfunc {
         if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) return (char*)"0";
         g_in_raw = 1;
 
-        // Enter alt screen, hide cursor, clear.
-        const char *seq = "\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H";
+        // Enter alt screen, hide cursor, clear, enable SGR mouse reporting
+        // (?1000h = button events, ?1006h = SGR extended encoding for
+        //  coordinates >=224 and clean parsing).
+        const char *seq = "\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H\x1b[?1000h\x1b[?1006h";
         write(STDOUT_FILENO, seq, strlen(seq));
 
         atexit(kr_term_restore_internal);
@@ -181,6 +183,44 @@ cfunc {
                 if (b3 == 'H') { strcpy(out, "HOME");  return out; }
                 if (b3 == 'F') { strcpy(out, "END");   return out; }
                 if (b3 == 'Z') { strcpy(out, "S-TAB"); return out; }
+                if (b3 == '<') {
+                    // SGR mouse: ESC [ < btn ; x ; y (M|m).
+                    // M = press, m = release. We surface presses + wheel only.
+                    char num[64]; int ni = 0;
+                    int term;
+                    for (;;) {
+                        int bx = kr_read_byte_timeout(50);
+                        if (bx < 0) { strcpy(out, "ESC"); return out; }
+                        if ((bx >= '0' && bx <= '9') || bx == ';') {
+                            if (ni < 63) num[ni++] = (char)bx;
+                            continue;
+                        }
+                        term = bx;
+                        break;
+                    }
+                    num[ni] = 0;
+                    int btn = 0, mx = 0, my = 0;
+                    sscanf(num, "%d;%d;%d", &btn, &mx, &my);
+                    // x,y are 1-based — convert to 0-based.
+                    if (mx > 0) mx -= 1;
+                    if (my > 0) my -= 1;
+                    if (term == 'M') {
+                        // Wheel: btn 64 = up, 65 = down (modifiers in high bits).
+                        int low = btn & 0x43;
+                        if (low == 0x40) { strcpy(out, "WHEEL-UP");   return out; }
+                        if (low == 0x41) { strcpy(out, "WHEEL-DOWN"); return out; }
+                        // Plain click: btn 0 = left, 1 = middle, 2 = right.
+                        const char *bs = "L";
+                        int bb = btn & 0x03;
+                        if (bb == 1) bs = "M";
+                        else if (bb == 2) bs = "R";
+                        snprintf(out, 32, "MOUSE\t%d\t%d\t%s", my, mx, bs);
+                        return out;
+                    }
+                    // Release ('m') — ignore for v0.1.
+                    strcpy(out, "MOUSE-UP");
+                    return out;
+                }
                 if (b3 >= '0' && b3 <= '9') {
                     // CSI <digits> <final>. Read digits then the terminator.
                     char num[16]; int ni = 0;
