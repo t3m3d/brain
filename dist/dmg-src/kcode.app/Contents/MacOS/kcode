@@ -1,0 +1,25 @@
+#!/bin/sh
+# Bundle launcher: open a fresh Terminal.app window running kcode-bin.
+# Args (e.g. files dragged onto the .app icon) are forwarded via argv.
+BUNDLE_DIR="$(cd "$(dirname "$0")" && pwd)"
+KCODE_BIN="$BUNDLE_DIR/kcode-bin"
+
+# Build the shell command we want Terminal to run.
+CMD="\"$KCODE_BIN\""
+for arg in "$@"; do
+    CMD="$CMD \"$arg\""
+done
+# Run from the user's home so kcode's tree picker doesn't sit in /.
+CMD="cd ~ && exec $CMD"
+
+# Escape backslashes and double quotes for AppleScript's "..." string
+# syntax — without this the literal " in $CMD terminates the string early
+# and osascript fails with -2741 "Expected end of line".
+APPLE_CMD=$(printf %s "$CMD" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+
+/usr/bin/osascript <<APPLESCRIPT
+tell application "Terminal"
+    activate
+    do script "$APPLE_CMD"
+end tell
+APPLESCRIPT
