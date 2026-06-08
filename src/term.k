@@ -19,317 +19,187 @@
 
 module term
 
-jxt {
-    func krTermInit() -> char_ptr
-    func krTermRestore() -> char_ptr
-    func krTermSize() -> char_ptr
-    func krTermReadKey() -> char_ptr
-    func krTermWrite(s) -> char_ptr
-    func krTermFlush() -> char_ptr
+// Pure Krypton — no C. Raw mode is set with `stty` on the controlling terminal
+// (/dev/tty); keys/output use the native fd builtins (fdRead/fdWrite). The engine
+// gives kcode a real pty with a controlling tty, so /dev/tty resolves correctly
+// whether kcode runs in Terminal.app or inside the kryoterm window shim.
+
+func _ESC() { emit fromCharCode(27) }
+
+// Strip trailing CR/LF/space from a captured string.
+func _chomp(s) {
+    let n = len(s)
+    while n > 0 {
+        let c = charCode(s[n - 1])
+        if c == 10 || c == 13 || c == 32 || c == 9 { n = n - 1 }
+        else { emit substring(s, 0, n) }
+    }
+    emit ""
 }
 
-cfunc {
-    #include <stdio.h>
-    #include <stdlib.h>
-    #include <string.h>
-    #include <unistd.h>
-    #include <termios.h>
-    #include <sys/ioctl.h>
-    #include <signal.h>
-
-    static struct termios g_orig_termios;
-    static int g_have_orig = 0;
-    static int g_in_raw = 0;
-
-    static void kr_term_restore_internal(void) {
-        if (g_have_orig && g_in_raw) {
-            // Set the flag FIRST so signal handlers / atexit don't double-fire.
-            g_in_raw = 0;
-            // Disable mouse reporting, show cursor, leave alt screen.
-            const char *seq = "\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l";
-            write(STDOUT_FILENO, seq, strlen(seq));
-            // TCSANOW — TCSAFLUSH was hanging in some pty configurations.
-            tcsetattr(STDIN_FILENO, TCSANOW, &g_orig_termios);
-        }
-    }
-
-    static void kr_term_signal(int sig) {
-        kr_term_restore_internal();
-        // Re-raise with default handler so the parent sees the right exit code.
-        signal(sig, SIG_DFL);
-        raise(sig);
-    }
-
-    char* krTermInit(void) {
-        if (g_in_raw) return (char*)"1";
-        if (tcgetattr(STDIN_FILENO, &g_orig_termios) == -1) return (char*)"0";
-        g_have_orig = 1;
-
-        struct termios raw = g_orig_termios;
-        // cfmakeraw clears: BRKINT, ICRNL, INPCK, ISTRIP, IXON, OPOST,
-        //                   ECHO, ECHONL, ICANON, ISIG, IEXTEN
-        // and sets CS8.
-        cfmakeraw(&raw);
-        raw.c_cc[VMIN]  = 1;   // block for at least one byte
-        raw.c_cc[VTIME] = 0;
-        if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) return (char*)"0";
-        g_in_raw = 1;
-
-        // Enter alt screen, hide cursor, clear, enable SGR mouse reporting
-        // (?1000h = button events, ?1006h = SGR extended encoding for
-        //  coordinates >=224 and clean parsing).
-        const char *seq = "\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H\x1b[?1000h\x1b[?1006h";
-        write(STDOUT_FILENO, seq, strlen(seq));
-
-        atexit(kr_term_restore_internal);
-        signal(SIGINT,  kr_term_signal);
-        signal(SIGTERM, kr_term_signal);
-        signal(SIGHUP,  kr_term_signal);
-        // Window resize: leave SIGWINCH at default; we poll size via tSize().
-        return (char*)"1";
-    }
-
-    char* krTermRestore(void) {
-        kr_term_restore_internal();
-        return (char*)"1";
-    }
-
-    char* krTermSize(void) {
-        struct winsize ws;
-        int rows = 24, cols = 80;
-        if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0 && ws.ws_col > 0) {
-            rows = ws.ws_row;
-            cols = ws.ws_col;
-        }
-        char *out = (char*)malloc(32);
-        if (!out) return (char*)"24,80";
-        snprintf(out, 32, "%d,%d", rows, cols);
-        return out;
-    }
-
-    // Read a single byte, blocking. Returns -1 on EOF / fatal error.
-    static int kr_read_byte_blocking(void) {
-        unsigned char c;
-        ssize_t n = read(STDIN_FILENO, &c, 1);
-        if (n == 1) return (int)c;
-        if (n == 0) return -1;
-        // Interrupted by signal — retry once.
-        if (n < 0) {
-            n = read(STDIN_FILENO, &c, 1);
-            if (n == 1) return (int)c;
-        }
-        return -1;
-    }
-
-    // Read a byte with a short timeout (ms). Returns -1 if no byte available.
-    static int kr_read_byte_timeout(int ms) {
-        struct termios cur, tmp;
-        tcgetattr(STDIN_FILENO, &cur);
-        tmp = cur;
-        tmp.c_cc[VMIN]  = 0;
-        tmp.c_cc[VTIME] = (ms + 99) / 100;   // tenths of a second, min 1
-        if (tmp.c_cc[VTIME] < 1) tmp.c_cc[VTIME] = 1;
-        tcsetattr(STDIN_FILENO, TCSANOW, &tmp);
-        unsigned char c;
-        ssize_t n = read(STDIN_FILENO, &c, 1);
-        tcsetattr(STDIN_FILENO, TCSANOW, &cur);
-        if (n == 1) return (int)c;
-        return -1;
-    }
-
-    // Fill `out` with a normalized key token. `out` must be at least 16 bytes.
-    static void kr_format_key(int b, char *out) {
-        if (b < 0)         { strcpy(out, "EOF");       return; }
-        if (b == 13)       { strcpy(out, "ENTER");     return; }
-        if (b == 10)       { strcpy(out, "ENTER");     return; }
-        if (b == 9)        { strcpy(out, "TAB");       return; }
-        if (b == 127)      { strcpy(out, "BACKSPACE"); return; }
-        if (b == 8)        { strcpy(out, "BACKSPACE"); return; }
-        if (b >= 1 && b <= 26) {
-            // Map Ctrl-A..Ctrl-Z to "C-a".."C-z". Skip TAB / ENTER / BACKSPACE
-            // which were handled above.
-            out[0] = 'C';
-            out[1] = '-';
-            out[2] = (char)('a' + b - 1);
-            out[3] = 0;
-            return;
-        }
-        if (b >= 32 && b < 127) {
-            out[0] = (char)b;
-            out[1] = 0;
-            return;
-        }
-        // Fall through: byte 28..31, or high bytes (UTF-8 leads handled by caller)
-        snprintf(out, 16, "?%d", b);
-    }
-
-    char* krTermReadKey(void) {
-        int b = kr_read_byte_blocking();
-        char *out = (char*)malloc(32);
-        if (!out) return (char*)"EOF";
-
-        if (b == 27) {
-            // ESC — could be lone Escape, ALT-<key>, or CSI/SS3 sequence.
-            int b2 = kr_read_byte_timeout(50);
-            if (b2 < 0) { strcpy(out, "ESC"); return out; }
-
-            if (b2 == '[') {
-                int b3 = kr_read_byte_timeout(50);
-                if (b3 < 0) { strcpy(out, "ESC"); return out; }
-                if (b3 == 'A') { strcpy(out, "UP");    return out; }
-                if (b3 == 'B') { strcpy(out, "DOWN");  return out; }
-                if (b3 == 'C') { strcpy(out, "RIGHT"); return out; }
-                if (b3 == 'D') { strcpy(out, "LEFT");  return out; }
-                if (b3 == 'H') { strcpy(out, "HOME");  return out; }
-                if (b3 == 'F') { strcpy(out, "END");   return out; }
-                if (b3 == 'Z') { strcpy(out, "S-TAB"); return out; }
-                if (b3 == '<') {
-                    // SGR mouse: ESC [ < btn ; x ; y (M|m).
-                    // M = press, m = release. We surface presses + wheel only.
-                    char num[64]; int ni = 0;
-                    int term;
-                    for (;;) {
-                        int bx = kr_read_byte_timeout(50);
-                        if (bx < 0) { strcpy(out, "ESC"); return out; }
-                        if ((bx >= '0' && bx <= '9') || bx == ';') {
-                            if (ni < 63) num[ni++] = (char)bx;
-                            continue;
-                        }
-                        term = bx;
-                        break;
-                    }
-                    num[ni] = 0;
-                    int btn = 0, mx = 0, my = 0;
-                    sscanf(num, "%d;%d;%d", &btn, &mx, &my);
-                    // x,y are 1-based — convert to 0-based.
-                    if (mx > 0) mx -= 1;
-                    if (my > 0) my -= 1;
-                    if (term == 'M') {
-                        // Wheel: btn 64 = up, 65 = down (modifiers in high bits).
-                        int low = btn & 0x43;
-                        if (low == 0x40) { strcpy(out, "WHEEL-UP");   return out; }
-                        if (low == 0x41) { strcpy(out, "WHEEL-DOWN"); return out; }
-                        // Plain click: btn 0 = left, 1 = middle, 2 = right.
-                        const char *bs = "L";
-                        int bb = btn & 0x03;
-                        if (bb == 1) bs = "M";
-                        else if (bb == 2) bs = "R";
-                        snprintf(out, 32, "MOUSE\t%d\t%d\t%s", my, mx, bs);
-                        return out;
-                    }
-                    // Release ('m') — ignore for v0.1.
-                    strcpy(out, "MOUSE-UP");
-                    return out;
-                }
-                if (b3 >= '0' && b3 <= '9') {
-                    // CSI <digits> <final>. Read digits then the terminator.
-                    char num[16]; int ni = 0;
-                    num[ni++] = (char)b3;
-                    int term;
-                    for (;;) {
-                        int bx = kr_read_byte_timeout(50);
-                        if (bx < 0) { strcpy(out, "ESC"); return out; }
-                        if (bx == ';' && ni < 15) { num[ni++] = (char)bx; continue; }
-                        if (bx >= '0' && bx <= '9' && ni < 15) { num[ni++] = (char)bx; continue; }
-                        term = bx;
-                        break;
-                    }
-                    num[ni] = 0;
-                    if (term == '~') {
-                        int n = atoi(num);
-                        if (n == 1 || n == 7)  { strcpy(out, "HOME");     return out; }
-                        if (n == 4 || n == 8)  { strcpy(out, "END");      return out; }
-                        if (n == 3)            { strcpy(out, "DEL");      return out; }
-                        if (n == 5)            { strcpy(out, "PAGEUP");   return out; }
-                        if (n == 6)            { strcpy(out, "PAGEDOWN"); return out; }
-                        if (n == 2)            { strcpy(out, "INS");      return out; }
-                        snprintf(out, 32, "CSI~%d", n);
-                        return out;
-                    }
-                    // CSI <digits> <letter> — e.g. modifier sequences.
-                    snprintf(out, 32, "CSI%s%c", num, (char)term);
-                    return out;
-                }
-                snprintf(out, 32, "CSI%c", (char)b3);
-                return out;
-            }
-            if (b2 == 'O') {
-                // SS3 sequences (some terminals send these for F-keys / arrows in app mode).
-                int b3 = kr_read_byte_timeout(50);
-                if (b3 < 0) { strcpy(out, "ESC"); return out; }
-                if (b3 == 'A') { strcpy(out, "UP");    return out; }
-                if (b3 == 'B') { strcpy(out, "DOWN");  return out; }
-                if (b3 == 'C') { strcpy(out, "RIGHT"); return out; }
-                if (b3 == 'D') { strcpy(out, "LEFT");  return out; }
-                if (b3 == 'H') { strcpy(out, "HOME");  return out; }
-                if (b3 == 'F') { strcpy(out, "END");   return out; }
-                if (b3 >= 'P' && b3 <= 'S') {
-                    snprintf(out, 32, "F%d", b3 - 'P' + 1);
-                    return out;
-                }
-                snprintf(out, 32, "SS3%c", (char)b3);
-                return out;
-            }
-
-            // ALT + <printable>
-            if (b2 >= 32 && b2 < 127) {
-                if (b2 >= 'A' && b2 <= 'Z') b2 = b2 - 'A' + 'a';  // normalize
-                snprintf(out, 32, "M-%c", (char)b2);
-                return out;
-            }
-            // ALT + control char
-            snprintf(out, 32, "M-?%d", b2);
-            return out;
-        }
-
-        // Multi-byte UTF-8: reassemble so the buffer stores the full codepoint.
-        if ((b & 0x80) != 0) {
-            int more = 0;
-            if      ((b & 0xE0) == 0xC0) more = 1;
-            else if ((b & 0xF0) == 0xE0) more = 2;
-            else if ((b & 0xF8) == 0xF0) more = 3;
-            if (more > 0 && more <= 3) {
-                unsigned char buf[5];
-                buf[0] = (unsigned char)b;
-                int ok = 1;
-                for (int i = 1; i <= more; i++) {
-                    int bx = kr_read_byte_timeout(50);
-                    if (bx < 0) { ok = 0; break; }
-                    buf[i] = (unsigned char)bx;
-                }
-                if (ok) {
-                    buf[more + 1] = 0;
-                    strcpy(out, (char*)buf);
-                    return out;
-                }
-            }
-            // Fall through if malformed.
-        }
-
-        kr_format_key(b, out);
-        return out;
-    }
-
-    char* krTermWrite(char *s) {
-        if (s) {
-            size_t n = strlen(s);
-            if (n > 0) write(STDOUT_FILENO, s, n);
-        }
-        return (char*)"1";
-    }
-
-    char* krTermFlush(void) {
-        fflush(stdout);
-        return (char*)"1";
-    }
+// tInit — save current tty settings (to /tmp), drop to raw, enter alt screen,
+// hide cursor, enable SGR mouse. Returns "1" on success, "0" if no tty.
+func tInit() {
+    let saved = exec("stty -g </dev/tty 2>/dev/null")
+    if len(saved) < 2 { emit "0" }              // not a terminal
+    writeFile("/tmp/kcode.stty", saved)
+    shellRun("stty raw -echo </dev/tty 2>/dev/null")
+    fdSetNonblock(0)                            // stdin: poll-driven reads (clean ESC timeout)
+    let e = _ESC()
+    let seq = e + "[?1049h" + e + "[?25l" + e + "[2J" + e + "[H" + e + "[?1000h" + e + "[?1006h"
+    fdWrite(1, seq, len(seq))
+    emit "1"
 }
 
-func tInit()      { emit krTermInit() }
-func tRestore()   { emit krTermRestore() }
-func tSize()      { emit krTermSize() }
-func tReadKey()   { emit krTermReadKey() }
-func tWrite(s)    { emit krTermWrite(s) }
-func tFlush()     { emit krTermFlush() }
+// tRestore — leave alt screen / show cursor / disable mouse, restore tty.
+func tRestore() {
+    let e = _ESC()
+    let seq = e + "[?1006l" + e + "[?1000l" + e + "[?25h" + e + "[?1049l"
+    fdWrite(1, seq, len(seq))
+    let saved = _chomp(readFile("/tmp/kcode.stty"))
+    if len(saved) > 1 { shellRun("stty " + saved + " </dev/tty 2>/dev/null") }
+    else { shellRun("stty sane </dev/tty 2>/dev/null") }
+    emit "1"
+}
+
+// tSize — "rows,cols" from `stty size` ("rows cols"); 24,80 fallback.
+func tSize() {
+    let s = _chomp(exec("stty size </dev/tty 2>/dev/null"))
+    let sp = indexOf(s, " ")
+    if sp > 0 {
+        let rows = substring(s, 0, sp)
+        let cols = substring(s, sp + 1, len(s))
+        if toInt(rows) > 0 && toInt(cols) > 0 { emit rows + "," + cols }
+    }
+    emit "24,80"     // unsized pty / parse miss -> sane default (editor needs >0 rows)
+}
+
+func tWrite(s)  { fdWrite(1, s, len(s))  emit "1" }
+func tFlush()   { emit "1" }                          // fdWrite is unbuffered — nothing to flush
+
+// ── key input ───────────────────────────────────────────────────────────────
+// stdin is non-blocking; we poll for the first byte, then grab any contiguous
+// continuation bytes (the rest of an escape sequence arrives together).
+
+// Block until at least one byte is available; returns it (1+ bytes).
+func _readBlocking() {
+    let k = fdRead(0, 1)
+    while len(k) == 0 {
+        sleepUs(0, 4000)                        // ~4ms idle poll
+        k = fdRead(0, 1)
+    }
+    emit k
+}
+
+// After ESC: wait up to ~40ms for continuation; if some arrives, drain the rest.
+func _readMore() {
+    let acc = ""
+    let w = 0
+    while w < 40 && len(acc) == 0 {
+        acc = fdRead(0, 16)
+        if len(acc) == 0 { sleepUs(0, 2000)  w = w + 2 }
+    }
+    let more = fdRead(0, 16)
+    while len(more) > 0 { acc = acc + more  more = fdRead(0, 16) }
+    emit acc
+}
+
+// Parse a CSI/SS3 body (everything after ESC) into a key token.
+func _parseEsc(rest) {
+    if len(rest) == 0 { emit "ESC" }
+    let b1 = charCode(rest[0])
+    let body = substring(rest, 1, len(rest))    // chars after '[' or 'O'
+    if b1 == 91 || b1 == 79 {                   // '[' (CSI) or 'O' (SS3)
+        if len(body) == 0 { emit "ESC" }
+        let f = charCode(body[0])               // first body char
+        if f == 65 { emit "UP" }
+        if f == 66 { emit "DOWN" }
+        if f == 67 { emit "RIGHT" }
+        if f == 68 { emit "LEFT" }
+        if f == 72 { emit "HOME" }
+        if f == 70 { emit "END" }
+        if f == 90 { emit "S-TAB" }
+        if b1 == 79 && f >= 80 && f <= 83 { emit "F" + (f - 80 + 1) }   // SS3 F1..F4
+        if f == 60 { emit _parseMouse(body) }   // '<' SGR mouse
+        if f >= 48 && f <= 57 {                 // digits: CSI n ~
+            let term = charCode(body[len(body) - 1])
+            let digs = substring(body, 0, len(body) - 1)
+            // strip any ';' modifier section — take leading number
+            let semi = indexOf(digs, ";")
+            if semi >= 0 { digs = substring(digs, 0, semi) }
+            let n = toInt(digs)
+            if term == 126 {                    // '~'
+                if n == 1 || n == 7 { emit "HOME" }
+                if n == 4 || n == 8 { emit "END" }
+                if n == 3 { emit "DEL" }
+                if n == 5 { emit "PAGEUP" }
+                if n == 6 { emit "PAGEDOWN" }
+                if n == 2 { emit "INS" }
+                emit "CSI~" + n
+            }
+            emit "CSI" + digs + fromCharCode(term)
+        }
+        emit "CSI" + fromCharCode(f)
+    }
+    // ESC + printable = ALT-<char>
+    if b1 >= 32 && b1 < 127 {
+        let c = b1
+        if c >= 65 && c <= 90 { c = c + 32 }
+        emit "M-" + fromCharCode(c)
+    }
+    emit "ESC"
+}
+
+// SGR mouse body: "<btn;x;yM" (the leading '<' already consumed -> body = "btn;x;yM").
+func _parseMouse(body) {
+    let n = len(body)
+    let term = charCode(body[n - 1])
+    let nums = substring(body, 1, n - 1)        // drop leading '<' and trailing M/m
+    let s1 = indexOf(nums, ";")
+    if s1 < 0 { emit "MOUSE-UP" }
+    let btn = toInt(substring(nums, 0, s1))
+    let r2 = substring(nums, s1 + 1, len(nums))
+    let s2 = indexOf(r2, ";")
+    if s2 < 0 { emit "MOUSE-UP" }
+    let mx = toInt(substring(r2, 0, s2))
+    let my = toInt(substring(r2, s2 + 1, len(r2)))
+    if mx > 0 { mx = mx - 1 }
+    if my > 0 { my = my - 1 }
+    if term == 109 { emit "MOUSE-UP" }          // 'm' release
+    let low = btn - (btn / 4) * 4 + (btn / 64) * 64   // keep wheel/button low bits
+    if btn == 64 { emit "WHEEL-UP" }
+    if btn == 65 { emit "WHEEL-DOWN" }
+    let bb = btn - (btn / 4) * 4
+    let bs = "L"
+    if bb == 1 { bs = "M" }
+    if bb == 2 { bs = "R" }
+    emit "MOUSE" + fromCharCode(9) + my + fromCharCode(9) + mx + fromCharCode(9) + bs
+}
+
+// tReadKey — one normalized key token (same vocabulary as before).
+func tReadKey() {
+    let k = _readBlocking()
+    let b = charCode(k[0])
+    if b == 27 { emit _parseEsc(_readMore()) }
+    if b == 13 || b == 10 { emit "ENTER" }
+    if b == 9 { emit "TAB" }
+    if b == 127 || b == 8 { emit "BACKSPACE" }
+    if b >= 1 && b <= 26 { emit "C-" + fromCharCode(96 + b) }   // C-a..C-z
+    if b >= 32 && b < 127 { emit k[0] }                         // printable ASCII
+    if b >= 128 {                                               // UTF-8 lead: gather the codepoint
+        let more = 1
+        if b >= 240 { more = 3 }
+        else { if b >= 224 { more = 2 } }
+        let buf = k
+        while len(buf) <= more {
+            let c = fdRead(0, 1)
+            if len(c) == 0 { sleepUs(0, 1000) }
+            else { buf = buf + c }
+        }
+        emit buf
+    }
+    emit "?" + b
+}
 
 // ── Entry: lives here so editor.k stays under the kcc 1.8.0 size threshold
 
