@@ -16,6 +16,7 @@ module editor
 
 import "term.k"
 import "buf.k"
+import "kv.k"
 
 // ── ANSI helpers ────────────────────────────────────────────────
 
@@ -155,35 +156,35 @@ func _hlLine(s, isK) {
 // ── Editor state ────────────────────────────────────────────────
 
 func edNew(initialPath, treeRoot) {
-    let e = envNew()
+    let e = kvNew()
     let b = bufNewEmpty()
     if initialPath != "" { b = bufLoad(initialPath) }
-    e = envSet(e, "buf", b)
-    e = envSet(e, "rows", 24)
-    e = envSet(e, "cols", 80)
-    e = envSet(e, "focus", "editor")
-    e = envSet(e, "prompt", "")
-    e = envSet(e, "promptInput", "")
-    e = envSet(e, "promptKind", "")
-    e = envSet(e, "message", "")
-    e = envSet(e, "messageKind", "")
-    e = envSet(e, "lastSearch", "")
-    e = envSet(e, "running", 1)
-    e = envSet(e, "overlay", "")
-    e = envSet(e, "overlayTitle", "")
-    e = envSet(e, "overlayScroll", 0)
-    e = envSet(e, "pkOpen", 0)
-    e = envSet(e, "pkFiles", "")
-    e = envSet(e, "pkQuery", "")
-    e = envSet(e, "pkCursor", 0)
-    e = envSet(e, "bufList", "")
-    if initialPath != "" { e = envSet(e, "bufList", initialPath) }
+    e = kvSet(e, "buf", b)
+    e = kvSet(e, "rows", 24)
+    e = kvSet(e, "cols", 80)
+    e = kvSet(e, "focus", "editor")
+    e = kvSet(e, "prompt", "")
+    e = kvSet(e, "promptInput", "")
+    e = kvSet(e, "promptKind", "")
+    e = kvSet(e, "message", "")
+    e = kvSet(e, "messageKind", "")
+    e = kvSet(e, "lastSearch", "")
+    e = kvSet(e, "running", 1)
+    e = kvSet(e, "overlay", "")
+    e = kvSet(e, "overlayTitle", "")
+    e = kvSet(e, "overlayScroll", 0)
+    e = kvSet(e, "pkOpen", 0)
+    e = kvSet(e, "pkFiles", "")
+    e = kvSet(e, "pkQuery", "")
+    e = kvSet(e, "pkCursor", 0)
+    e = kvSet(e, "bufList", "")
+    if initialPath != "" { e = kvSet(e, "bufList", initialPath) }
     emit e
 }
 
 func _setMsg(e, msg, kind) {
-    e = envSet(e, "message", msg)
-    e = envSet(e, "messageKind", kind)
+    e = kvSet(e, "message", msg)
+    e = kvSet(e, "messageKind", kind)
     emit e
 }
 
@@ -209,17 +210,17 @@ func _padRight(s, width) {
 // ── Render ──────────────────────────────────────────────────────
 
 func _renderEditor(e, sb, viewRowsCount) {
-    let b = envGet(e, "buf")
-    let cols = toInt(envGet(e, "cols"))
+    let b = kvGet(e, "buf")
+    let cols = toInt(kvGet(e, "cols"))
     let gutterW = _gutterWidth(b)
     let contentW = cols - gutterW
     if contentW < 4 { contentW = 4 }
 
-    let scrollRow = toInt(envGet(b, "scrollRow"))
-    let scrollCol = toInt(envGet(b, "scrollCol"))
-    let cursorRow = toInt(envGet(b, "row"))
+    let scrollRow = toInt(kvGet(b, "scrollRow"))
+    let scrollCol = toInt(kvGet(b, "scrollCol"))
+    let cursorRow = toInt(kvGet(b, "row"))
     let totalLines = bufNumLines(b)
-    let path = envGet(b, "path")
+    let path = kvGet(b, "path")
     let isK = 0
     if endsWith(path, ".k") == "1" { isK = 1 }
 
@@ -267,22 +268,22 @@ func _renderEditor(e, sb, viewRowsCount) {
 }
 
 func _renderStatus(e, sb) {
-    let rows = toInt(envGet(e, "rows"))
-    let cols = toInt(envGet(e, "cols"))
-    let b = envGet(e, "buf")
-    let path = envGet(b, "path")
+    let rows = toInt(kvGet(e, "rows"))
+    let cols = toInt(kvGet(e, "cols"))
+    let b = kvGet(e, "buf")
+    let path = kvGet(b, "path")
     if path == "" { path = "[no name]" }
     let dirty = ""
-    if toInt(envGet(b, "dirty")) == 1 { dirty = " ●" }
-    let row = toInt(envGet(b, "row")) + 1
-    let col = toInt(envGet(b, "col")) + 1
+    if toInt(kvGet(b, "dirty")) == 1 { dirty = " ●" }
+    let row = toInt(kvGet(b, "row")) + 1
+    let col = toInt(kvGet(b, "col")) + 1
     let totalLines = bufNumLines(b)
     let mode = "EDIT"
-    if envGet(e, "focus") == "prompt" { mode = "PROMPT" }
-    let bufList = envGet(e, "bufList")
+    if kvGet(e, "focus") == "prompt" { mode = "PROMPT" }
+    let bufList = kvGet(e, "bufList")
     let nBufs = lineCount(bufList)
     if bufList == "" { nBufs = 0 }
-    let bufIdx = _bufListIndex(bufList, envGet(b, "path"))
+    let bufIdx = _bufListIndex(bufList, kvGet(b, "path"))
     let bufTag = ""
     if nBufs > 1 { bufTag = "  [" + (bufIdx + 1) + "/" + nBufs + "]" }
 
@@ -305,19 +306,19 @@ func _renderStatus(e, sb) {
 }
 
 func _renderMinibuffer(e, sb) {
-    let rows = toInt(envGet(e, "rows"))
-    let cols = toInt(envGet(e, "cols"))
+    let rows = toInt(kvGet(e, "rows"))
+    let cols = toInt(kvGet(e, "cols"))
     sb = sbAppend(sb, _at(rows - 1, 0))
-    if envGet(e, "focus") == "prompt" {
-        let prompt = envGet(e, "prompt")
-        let inp = envGet(e, "promptInput")
+    if kvGet(e, "focus") == "prompt" {
+        let prompt = kvGet(e, "prompt")
+        let inp = kvGet(e, "promptInput")
         let txt = prompt + inp
         if len(txt) > cols - 1 { txt = substring(txt, len(txt) - (cols - 1), len(txt)) }
         sb = sbAppend(sb, txt)
         sb = sbAppend(sb, _clearEol())
     } else {
-        let msg = envGet(e, "message")
-        let kind = envGet(e, "messageKind")
+        let msg = kvGet(e, "message")
+        let kind = kvGet(e, "messageKind")
         if kind == "err" { sb = sbAppend(sb, _msgErrFg()) }
         else if kind == "ok" { sb = sbAppend(sb, _msgOkFg()) }
         else { sb = sbAppend(sb, _dim()) }
@@ -330,11 +331,11 @@ func _renderMinibuffer(e, sb) {
 }
 
 func _renderOverlay(e, sb) {
-    let rows = toInt(envGet(e, "rows"))
-    let cols = toInt(envGet(e, "cols"))
-    let title = envGet(e, "overlayTitle")
-    let body = envGet(e, "overlay")
-    let scroll = toInt(envGet(e, "overlayScroll"))
+    let rows = toInt(kvGet(e, "rows"))
+    let cols = toInt(kvGet(e, "cols"))
+    let title = kvGet(e, "overlayTitle")
+    let body = kvGet(e, "overlay")
+    let scroll = toInt(kvGet(e, "overlayScroll"))
     sb = sbAppend(sb, _at(0, 0))
     sb = sbAppend(sb, _statusBgActive())
     let header = "  " + title + "    [ESC dismiss · ↑↓ scroll]"
@@ -381,14 +382,14 @@ func _pkFilter(files, query) {
 }
 
 func _renderPicker(e, sb) {
-    let rows = toInt(envGet(e, "rows"))
-    let cols = toInt(envGet(e, "cols"))
-    let q = envGet(e, "pkQuery")
-    let files = envGet(e, "pkFiles")
+    let rows = toInt(kvGet(e, "rows"))
+    let cols = toInt(kvGet(e, "cols"))
+    let q = kvGet(e, "pkQuery")
+    let files = kvGet(e, "pkFiles")
     let filtered = _pkFilter(files, q)
     let total = lineCount(filtered)
     if filtered == "" { total = 0 }
-    let cursor = toInt(envGet(e, "pkCursor"))
+    let cursor = toInt(kvGet(e, "pkCursor"))
     if cursor >= total { cursor = total - 1 }
     if cursor < 0 { cursor = 0 }
 
@@ -440,18 +441,18 @@ func _shellCapture(cmd) {
 
 func _pkOpen(e) {
     let listing = _shellCapture("find . -maxdepth 8 -type f -not -path '*/.*' | sed 's|^./||' | sort | head -5000")
-    e = envSet(e, "pkOpen", 1)
-    e = envSet(e, "pkFiles", listing)
-    e = envSet(e, "pkQuery", "")
-    e = envSet(e, "pkCursor", 0)
+    e = kvSet(e, "pkOpen", 1)
+    e = kvSet(e, "pkFiles", listing)
+    e = kvSet(e, "pkQuery", "")
+    e = kvSet(e, "pkCursor", 0)
     emit e
 }
 
 func _pkClose(e) {
-    e = envSet(e, "pkOpen", 0)
-    e = envSet(e, "pkFiles", "")
-    e = envSet(e, "pkQuery", "")
-    e = envSet(e, "pkCursor", 0)
+    e = kvSet(e, "pkOpen", 0)
+    e = kvSet(e, "pkFiles", "")
+    e = kvSet(e, "pkQuery", "")
+    e = kvSet(e, "pkCursor", 0)
     emit e
 }
 
@@ -507,37 +508,37 @@ func _bufListRemove(list, path) {
 // unnamed, replace it instead of growing the list.
 func edOpenBuffer(e, path) {
     if path == "" { emit e }
-    let b = envGet(e, "buf")
-    let curPath = envGet(b, "path")
-    let curText = envGet(b, "text")
+    let b = kvGet(e, "buf")
+    let curPath = kvGet(b, "path")
+    let curText = kvGet(b, "text")
     if curPath == "" && curText == "" {
-        e = envSet(e, "buf", bufLoad(path))
-        e = envSet(e, "bufList", _bufListAdd(envGet(e, "bufList"), path))
+        e = kvSet(e, "buf", bufLoad(path))
+        e = kvSet(e, "bufList", _bufListAdd(kvGet(e, "bufList"), path))
         emit e
     }
     // Stash current under its path, then open new.
     if curPath != "" {
-        e = envSet(e, "buf:" + curPath, b)
+        e = kvSet(e, "buf:" + curPath, b)
     }
     // bufList already contains `path` only if we've opened it before;
     // checking here avoids the noisy "undefined variable" envGet warning
     // for the first-open case.
-    let known = _bufListContains(envGet(e, "bufList"), path)
+    let known = _bufListContains(kvGet(e, "bufList"), path)
     if known == 1 {
-        e = envSet(e, "buf", envGet(e, "buf:" + path))
+        e = kvSet(e, "buf", kvGet(e, "buf:" + path))
     } else {
-        e = envSet(e, "buf", bufLoad(path))
+        e = kvSet(e, "buf", bufLoad(path))
     }
-    e = envSet(e, "bufList", _bufListAdd(envGet(e, "bufList"), path))
+    e = kvSet(e, "bufList", _bufListAdd(kvGet(e, "bufList"), path))
     emit e
 }
 
 // Cycle to next/prev buffer in bufList. step = +1 or -1.
 func edCycleBuffer(e, step) {
-    let list = envGet(e, "bufList")
+    let list = kvGet(e, "bufList")
     let n = lineCount(list)
     if list == "" || n < 2 { emit e }
-    let cur = envGet(envGet(e, "buf"), "path")
+    let cur = kvGet(kvGet(e, "buf"), "path")
     let idx = _bufListIndex(list, cur)
     if idx < 0 { idx = 0 }
     let nextIdx = idx + step
@@ -545,36 +546,36 @@ func edCycleBuffer(e, step) {
     if nextIdx >= n { nextIdx = 0 }
     let nextPath = getLine(list, nextIdx)
     if nextPath == cur { emit e }
-    e = envSet(e, "buf:" + cur, envGet(e, "buf"))
-    e = envSet(e, "buf", envGet(e, "buf:" + nextPath))
+    e = kvSet(e, "buf:" + cur, kvGet(e, "buf"))
+    e = kvSet(e, "buf", kvGet(e, "buf:" + nextPath))
     emit e
 }
 
 // Close current buffer. If last, drop to an empty buffer.
 func edCloseBuffer(e) {
-    let b = envGet(e, "buf")
-    let curPath = envGet(b, "path")
-    let list = envGet(e, "bufList")
+    let b = kvGet(e, "buf")
+    let curPath = kvGet(b, "path")
+    let list = kvGet(e, "bufList")
     if list == "" {
-        e = envSet(e, "buf", bufNewEmpty())
+        e = kvSet(e, "buf", bufNewEmpty())
         emit e
     }
     let newList = _bufListRemove(list, curPath)
-    e = envSet(e, "bufList", newList)
+    e = kvSet(e, "bufList", newList)
     if newList == "" {
-        e = envSet(e, "buf", bufNewEmpty())
+        e = kvSet(e, "buf", bufNewEmpty())
         emit e
     }
     let nextPath = getLine(newList, 0)
-    e = envSet(e, "buf", envGet(e, "buf:" + nextPath))
+    e = kvSet(e, "buf", kvGet(e, "buf:" + nextPath))
     emit e
 }
 
 func _handlePickerKey(e, k) {
     if k == "ESC" || k == "C-g" { e = _pkClose(e); emit e }
     if k == "ENTER" {
-        let filtered = _pkFilter(envGet(e, "pkFiles"), envGet(e, "pkQuery"))
-        let cursor = toInt(envGet(e, "pkCursor"))
+        let filtered = _pkFilter(kvGet(e, "pkFiles"), kvGet(e, "pkQuery"))
+        let cursor = toInt(kvGet(e, "pkCursor"))
         let total = lineCount(filtered)
         if filtered == "" { total = 0 }
         if cursor >= total { cursor = total - 1 }
@@ -585,30 +586,30 @@ func _handlePickerKey(e, k) {
         e = _pkClose(e); emit e
     }
     if k == "UP" {
-        let c = toInt(envGet(e, "pkCursor"))
+        let c = toInt(kvGet(e, "pkCursor"))
         if c > 0 { c -= 1 }
-        e = envSet(e, "pkCursor", c); emit e
+        e = kvSet(e, "pkCursor", c); emit e
     }
     if k == "DOWN" {
-        let c = toInt(envGet(e, "pkCursor"))
+        let c = toInt(kvGet(e, "pkCursor"))
         c += 1
-        e = envSet(e, "pkCursor", c); emit e
+        e = kvSet(e, "pkCursor", c); emit e
     }
     if k == "BACKSPACE" {
-        let s = envGet(e, "pkQuery")
-        if len(s) > 0 { e = envSet(e, "pkQuery", substring(s, 0, len(s) - 1)) }
-        e = envSet(e, "pkCursor", 0); emit e
+        let s = kvGet(e, "pkQuery")
+        if len(s) > 0 { e = kvSet(e, "pkQuery", substring(s, 0, len(s) - 1)) }
+        e = kvSet(e, "pkCursor", 0); emit e
     }
     if len(k) == 1 {
         let cc = charCode(k)
         if cc >= 32 && cc < 127 {
-            e = envSet(e, "pkQuery", envGet(e, "pkQuery") + k)
-            e = envSet(e, "pkCursor", 0); emit e
+            e = kvSet(e, "pkQuery", kvGet(e, "pkQuery") + k)
+            e = kvSet(e, "pkCursor", 0); emit e
         }
     } else {
         if charCode(k[0]) >= 128 {
-            e = envSet(e, "pkQuery", envGet(e, "pkQuery") + k)
-            e = envSet(e, "pkCursor", 0); emit e
+            e = kvSet(e, "pkQuery", kvGet(e, "pkQuery") + k)
+            e = kvSet(e, "pkCursor", 0); emit e
         }
     }
     emit e
@@ -621,22 +622,22 @@ func edRender(e) {
     let cols = toInt(substring(sz, comma + 1, len(sz)))
     if rows < 5 { rows = 5 }
     if cols < 20 { cols = 20 }
-    e = envSet(e, "rows", rows)
-    e = envSet(e, "cols", cols)
-    let b = envGet(e, "buf")
+    e = kvSet(e, "rows", rows)
+    e = kvSet(e, "cols", cols)
+    let b = kvGet(e, "buf")
     let gutterW = _gutterWidth(b)
     let contentW = cols - gutterW
     if contentW < 4 { contentW = 4 }
     b = bufScrollToCursor(b, rows - 2, contentW)
-    e = envSet(e, "buf", b)
+    e = kvSet(e, "buf", b)
 
     let sb = sbNew()
     sb = sbAppend(sb, _hide())
-    if toInt(envGet(e, "pkOpen")) == 1 {
+    if toInt(kvGet(e, "pkOpen")) == 1 {
         sb = _renderPicker(e, sb)
-        sb = sbAppend(sb, _at(1, 2 + len(envGet(e, "pkQuery"))))
+        sb = sbAppend(sb, _at(1, 2 + len(kvGet(e, "pkQuery"))))
         sb = sbAppend(sb, _show())
-    } else if envGet(e, "overlay") != "" {
+    } else if kvGet(e, "overlay") != "" {
         sb = _renderOverlay(e, sb)
         sb = _renderStatus(e, sb)
         sb = _renderMinibuffer(e, sb)
@@ -645,16 +646,16 @@ func edRender(e) {
         sb = _renderEditor(e, sb, rows - 2)
         sb = _renderStatus(e, sb)
         sb = _renderMinibuffer(e, sb)
-        if envGet(e, "focus") == "prompt" {
-            let cursorCol = len(envGet(e, "prompt")) + len(envGet(e, "promptInput"))
+        if kvGet(e, "focus") == "prompt" {
+            let cursorCol = len(kvGet(e, "prompt")) + len(kvGet(e, "promptInput"))
             if cursorCol > cols - 1 { cursorCol = cols - 1 }
             sb = sbAppend(sb, _at(rows - 1, cursorCol))
             sb = sbAppend(sb, _show())
         } else {
-            let r2 = toInt(envGet(b, "row"))
-            let c2 = toInt(envGet(b, "col"))
-            let sr = toInt(envGet(b, "scrollRow"))
-            let sc = toInt(envGet(b, "scrollCol"))
+            let r2 = toInt(kvGet(b, "row"))
+            let c2 = toInt(kvGet(b, "col"))
+            let sr = toInt(kvGet(b, "scrollRow"))
+            let sc = toInt(kvGet(b, "scrollCol"))
             sb = sbAppend(sb, _at(r2 - sr, gutterW + (c2 - sc)))
             sb = sbAppend(sb, _show())
         }
@@ -667,34 +668,34 @@ func edRender(e) {
 // ── Prompt helpers ──────────────────────────────────────────────
 
 func _enterPrompt(e, kind, prompt, prefill) {
-    e = envSet(e, "focus", "prompt")
-    e = envSet(e, "promptKind", kind)
-    e = envSet(e, "prompt", prompt)
-    e = envSet(e, "promptInput", prefill)
-    e = envSet(e, "message", "")
+    e = kvSet(e, "focus", "prompt")
+    e = kvSet(e, "promptKind", kind)
+    e = kvSet(e, "prompt", prompt)
+    e = kvSet(e, "promptInput", prefill)
+    e = kvSet(e, "message", "")
     emit e
 }
 
 func _exitPrompt(e) {
-    e = envSet(e, "focus", "editor")
-    e = envSet(e, "promptKind", "")
-    e = envSet(e, "prompt", "")
-    e = envSet(e, "promptInput", "")
+    e = kvSet(e, "focus", "editor")
+    e = kvSet(e, "promptKind", "")
+    e = kvSet(e, "prompt", "")
+    e = kvSet(e, "promptInput", "")
     emit e
 }
 
 func _submitPrompt(e) {
-    let kind = envGet(e, "promptKind")
-    let inp = envGet(e, "promptInput")
+    let kind = kvGet(e, "promptKind")
+    let inp = kvGet(e, "promptInput")
     if kind == "save-as" {
         if inp == "" {
             e = _setMsg(e, "save-as cancelled", "err")
             e = _exitPrompt(e); emit e
         }
-        let b = envGet(e, "buf")
-        b = envSet(b, "path", inp)
+        let b = kvGet(e, "buf")
+        b = kvSet(b, "path", inp)
         b = bufSave(b)
-        e = envSet(e, "buf", b)
+        e = kvSet(e, "buf", b)
         e = _setMsg(e, "saved " + inp, "ok")
         e = _exitPrompt(e); emit e
     }
@@ -706,22 +707,22 @@ func _submitPrompt(e) {
     }
     if kind == "search" {
         if inp == "" { e = _exitPrompt(e); emit e }
-        e = envSet(e, "lastSearch", inp)
-        let b3 = envGet(e, "buf")
-        b3 = bufFind(b3, inp, toInt(envGet(b3, "row")), toInt(envGet(b3, "col")), 1)
-        e = envSet(e, "buf", b3)
+        e = kvSet(e, "lastSearch", inp)
+        let b3 = kvGet(e, "buf")
+        b3 = bufFind(b3, inp, toInt(kvGet(b3, "row")), toInt(kvGet(b3, "col")), 1)
+        e = kvSet(e, "buf", b3)
         e = _setMsg(e, "find: " + inp + " (Ctrl-G next)", "ok")
         e = _exitPrompt(e); emit e
     }
     if kind == "go-to-line" {
         if inp == "" { e = _exitPrompt(e); emit e }
-        let b4 = envGet(e, "buf")
+        let b4 = kvGet(e, "buf")
         b4 = bufGotoLine(b4, toInt(inp))
-        e = envSet(e, "buf", b4)
+        e = kvSet(e, "buf", b4)
         e = _exitPrompt(e); emit e
     }
     if kind == "quit-confirm" {
-        if inp == "y" || inp == "Y" { e = envSet(e, "running", 0) }
+        if inp == "y" || inp == "Y" { e = kvSet(e, "running", 0) }
         e = _exitPrompt(e); emit e
     }
     e = _exitPrompt(e); emit e
@@ -730,13 +731,13 @@ func _submitPrompt(e) {
 // ── Build / run ─────────────────────────────────────────────────
 
 func _runBuild(e, alsoExecute) {
-    let b = envGet(e, "buf")
-    let path = envGet(b, "path")
+    let b = kvGet(e, "buf")
+    let path = kvGet(b, "path")
     if path == "" { e = _setMsg(e, "no file path — save first", "err"); emit e }
     if endsWith(path, ".k") != "1" { e = _setMsg(e, "not a .k file", "err"); emit e }
-    if toInt(envGet(b, "dirty")) == 1 {
+    if toInt(kvGet(b, "dirty")) == 1 {
         b = bufSave(b)
-        e = envSet(e, "buf", b)
+        e = kvSet(e, "buf", b)
     }
     let bin = "/tmp/_kcode_run_bin"
     let buildOut = _shellCapture("kcc.sh " + path + " -o " + bin)
@@ -748,60 +749,60 @@ func _runBuild(e, alsoExecute) {
         title = "BUILD+RUN: " + path
     }
     if body == "" { body = "(no output)" }
-    e = envSet(e, "overlay", body)
-    e = envSet(e, "overlayTitle", title)
-    e = envSet(e, "overlayScroll", 0)
+    e = kvSet(e, "overlay", body)
+    e = kvSet(e, "overlayTitle", title)
+    e = kvSet(e, "overlayScroll", 0)
     emit e
 }
 
 // ── Key dispatch ────────────────────────────────────────────────
 
 func _confirmQuit(e) {
-    let b = envGet(e, "buf")
-    if toInt(envGet(b, "dirty")) == 1 {
+    let b = kvGet(e, "buf")
+    if toInt(kvGet(b, "dirty")) == 1 {
         e = _enterPrompt(e, "quit-confirm", "unsaved changes — quit anyway? (y/N) ", "")
         emit e
     }
-    e = envSet(e, "running", 0)
+    e = kvSet(e, "running", 0)
     emit e
 }
 
 func _handleEditorKey(e, k) {
-    let b = envGet(e, "buf")
-    if k == "LEFT"     { b = bufMoveLeft(b);  e = envSet(e, "buf", b); emit e }
-    if k == "RIGHT"    { b = bufMoveRight(b); e = envSet(e, "buf", b); emit e }
-    if k == "UP"       { b = bufMoveUp(b);    e = envSet(e, "buf", b); emit e }
-    if k == "DOWN"     { b = bufMoveDown(b);  e = envSet(e, "buf", b); emit e }
-    if k == "HOME"     { b = bufHome(b);      e = envSet(e, "buf", b); emit e }
-    if k == "END"      { b = bufEnd(b);       e = envSet(e, "buf", b); emit e }
+    let b = kvGet(e, "buf")
+    if k == "LEFT"     { b = bufMoveLeft(b);  e = kvSet(e, "buf", b); emit e }
+    if k == "RIGHT"    { b = bufMoveRight(b); e = kvSet(e, "buf", b); emit e }
+    if k == "UP"       { b = bufMoveUp(b);    e = kvSet(e, "buf", b); emit e }
+    if k == "DOWN"     { b = bufMoveDown(b);  e = kvSet(e, "buf", b); emit e }
+    if k == "HOME"     { b = bufHome(b);      e = kvSet(e, "buf", b); emit e }
+    if k == "END"      { b = bufEnd(b);       e = kvSet(e, "buf", b); emit e }
     if k == "PAGEUP"   {
-        b = bufPageUp(b, toInt(envGet(e, "rows")) - 4)
-        e = envSet(e, "buf", b); emit e
+        b = bufPageUp(b, toInt(kvGet(e, "rows")) - 4)
+        e = kvSet(e, "buf", b); emit e
     }
     if k == "PAGEDOWN" {
-        b = bufPageDown(b, toInt(envGet(e, "rows")) - 4)
-        e = envSet(e, "buf", b); emit e
+        b = bufPageDown(b, toInt(kvGet(e, "rows")) - 4)
+        e = kvSet(e, "buf", b); emit e
     }
-    if k == "BACKSPACE" { b = bufBackspace(b);    e = envSet(e, "buf", b); emit e }
-    if k == "DEL"       { b = bufDeleteForward(b); e = envSet(e, "buf", b); emit e }
-    if k == "ENTER"     { b = bufInsertNewline(b); e = envSet(e, "buf", b); emit e }
-    if k == "TAB"       { b = bufInsertChar(b, "    "); e = envSet(e, "buf", b); emit e }
+    if k == "BACKSPACE" { b = bufBackspace(b);    e = kvSet(e, "buf", b); emit e }
+    if k == "DEL"       { b = bufDeleteForward(b); e = kvSet(e, "buf", b); emit e }
+    if k == "ENTER"     { b = bufInsertNewline(b); e = kvSet(e, "buf", b); emit e }
+    if k == "TAB"       { b = bufInsertChar(b, "    "); e = kvSet(e, "buf", b); emit e }
 
     if k == "C-q" { e = _confirmQuit(e); emit e }
     if k == "C-s" {
-        let p = envGet(b, "path")
+        let p = kvGet(b, "path")
         if p == "" { e = _enterPrompt(e, "save-as", "save as: ", ""); emit e }
         b = bufSave(b)
-        e = envSet(e, "buf", b)
+        e = kvSet(e, "buf", b)
         e = _setMsg(e, "saved " + p, "ok"); emit e
     }
     if k == "C-o" { e = _enterPrompt(e, "open", "open: ", ""); emit e }
-    if k == "C-f" { e = _enterPrompt(e, "search", "find: ", envGet(e, "lastSearch")); emit e }
+    if k == "C-f" { e = _enterPrompt(e, "search", "find: ", kvGet(e, "lastSearch")); emit e }
     if k == "C-g" {
-        let needle = envGet(e, "lastSearch")
+        let needle = kvGet(e, "lastSearch")
         if needle == "" { emit e }
-        b = bufFind(b, needle, toInt(envGet(b, "row")), toInt(envGet(b, "col")) + 1, 1)
-        e = envSet(e, "buf", b)
+        b = bufFind(b, needle, toInt(kvGet(b, "row")), toInt(kvGet(b, "col")) + 1, 1)
+        e = kvSet(e, "buf", b)
         e = _setMsg(e, "find next: " + needle, "ok"); emit e
     }
     if k == "C-l" { e = _enterPrompt(e, "go-to-line", "goto line: ", ""); emit e }
@@ -809,31 +810,31 @@ func _handleEditorKey(e, k) {
     if k == "M-n" { e = edCycleBuffer(e, 1);  emit e }
     if k == "M-p" { e = edCycleBuffer(e, 0 - 1); emit e }
     if k == "C-w" {
-        let bb = envGet(e, "buf")
-        if toInt(envGet(bb, "dirty")) == 1 {
+        let bb = kvGet(e, "buf")
+        if toInt(kvGet(bb, "dirty")) == 1 {
             e = _setMsg(e, "buffer is dirty — save (Ctrl-S) first or undo your changes", "err")
             emit e
         }
         e = edCloseBuffer(e); emit e
     }
-    if k == "C-z" { b = bufUndo(b); e = envSet(e, "buf", b); e = _setMsg(e, "undo", ""); emit e }
-    if k == "C-y" { b = bufRedo(b); e = envSet(e, "buf", b); e = _setMsg(e, "redo", ""); emit e }
+    if k == "C-z" { b = bufUndo(b); e = kvSet(e, "buf", b); e = _setMsg(e, "undo", ""); emit e }
+    if k == "C-y" { b = bufRedo(b); e = kvSet(e, "buf", b); e = _setMsg(e, "redo", ""); emit e }
     if k == "C-b" { e = _runBuild(e, 0); emit e }
     if k == "C-r" { e = _runBuild(e, 1); emit e }
-    if k == "ESC" { e = envSet(e, "message", ""); emit e }
+    if k == "ESC" { e = kvSet(e, "message", ""); emit e }
 
     // Mouse: scroll wheel works in editor mode regardless of focus.
     if k == "WHEEL-UP" {
         b = bufMoveUp(b); b = bufMoveUp(b); b = bufMoveUp(b)
-        e = envSet(e, "buf", b); emit e
+        e = kvSet(e, "buf", b); emit e
     }
     if k == "WHEEL-DOWN" {
         b = bufMoveDown(b); b = bufMoveDown(b); b = bufMoveDown(b)
-        e = envSet(e, "buf", b); emit e
+        e = kvSet(e, "buf", b); emit e
     }
     // MOUSE\t<row>\t<col>\t<btn>: position cursor at click target.
     if startsWith(k, "MOUSE\t") == "1" {
-        let rows = toInt(envGet(e, "rows"))
+        let rows = toInt(kvGet(e, "rows"))
         let tab1 = indexOf(k, "\t")
         let rest = substring(k, tab1 + 1, len(k))
         let tab2 = indexOf(rest, "\t")
@@ -844,8 +845,8 @@ func _handleEditorKey(e, k) {
         // Ignore clicks on the status / minibuffer rows.
         if mr < rows - 2 {
             let gutterW = _gutterWidth(b)
-            let scrollRow = toInt(envGet(b, "scrollRow"))
-            let scrollCol = toInt(envGet(b, "scrollCol"))
+            let scrollRow = toInt(kvGet(b, "scrollRow"))
+            let scrollCol = toInt(kvGet(b, "scrollCol"))
             let targetRow = scrollRow + mr
             let nl = bufNumLines(b)
             if targetRow >= nl { targetRow = nl - 1 }
@@ -854,11 +855,11 @@ func _handleEditorKey(e, k) {
             if targetCol < 0 { targetCol = 0 }
             let ll = bufLineLen(b, targetRow)
             if targetCol > ll { targetCol = ll }
-            b = envSet(b, "row", targetRow)
-            b = envSet(b, "col", targetCol)
-            b = envSet(b, "goalCol", targetCol)
+            b = kvSet(b, "row", targetRow)
+            b = kvSet(b, "col", targetCol)
+            b = kvSet(b, "goalCol", targetCol)
             b = bufMarkBoundary(b)
-            e = envSet(e, "buf", b)
+            e = kvSet(e, "buf", b)
         }
         emit e
     }
@@ -866,11 +867,11 @@ func _handleEditorKey(e, k) {
     if len(k) == 1 {
         let cc = charCode(k)
         if cc >= 32 && cc < 127 {
-            b = bufInsertChar(b, k); e = envSet(e, "buf", b); emit e
+            b = bufInsertChar(b, k); e = kvSet(e, "buf", b); emit e
         }
     } else {
         if charCode(k[0]) >= 128 {
-            b = bufInsertChar(b, k); e = envSet(e, "buf", b); emit e
+            b = bufInsertChar(b, k); e = kvSet(e, "buf", b); emit e
         }
     }
     emit e
@@ -880,18 +881,18 @@ func _handlePromptKey(e, k) {
     if k == "ESC"       { e = _exitPrompt(e); emit e }
     if k == "ENTER"     { e = _submitPrompt(e); emit e }
     if k == "BACKSPACE" {
-        let s = envGet(e, "promptInput")
-        if len(s) > 0 { e = envSet(e, "promptInput", substring(s, 0, len(s) - 1)) }
+        let s = kvGet(e, "promptInput")
+        if len(s) > 0 { e = kvSet(e, "promptInput", substring(s, 0, len(s) - 1)) }
         emit e
     }
     if len(k) == 1 {
         let cc = charCode(k)
         if cc >= 32 && cc < 127 {
-            e = envSet(e, "promptInput", envGet(e, "promptInput") + k); emit e
+            e = kvSet(e, "promptInput", kvGet(e, "promptInput") + k); emit e
         }
     } else {
         if charCode(k[0]) >= 128 {
-            e = envSet(e, "promptInput", envGet(e, "promptInput") + k); emit e
+            e = kvSet(e, "promptInput", kvGet(e, "promptInput") + k); emit e
         }
     }
     emit e
@@ -899,23 +900,23 @@ func _handlePromptKey(e, k) {
 
 func _handleOverlayKey(e, k) {
     if k == "ESC" || k == "q" || k == "C-c" {
-        e = envSet(e, "overlay", ""); e = envSet(e, "overlayTitle", ""); emit e
+        e = kvSet(e, "overlay", ""); e = kvSet(e, "overlayTitle", ""); emit e
     }
     if k == "DOWN" || k == "j" {
-        e = envSet(e, "overlayScroll", toInt(envGet(e, "overlayScroll")) + 1); emit e
+        e = kvSet(e, "overlayScroll", toInt(kvGet(e, "overlayScroll")) + 1); emit e
     }
     if k == "UP" || k == "k" {
-        let s = toInt(envGet(e, "overlayScroll")) - 1
+        let s = toInt(kvGet(e, "overlayScroll")) - 1
         if s < 0 { s = 0 }
-        e = envSet(e, "overlayScroll", s); emit e
+        e = kvSet(e, "overlayScroll", s); emit e
     }
     if k == "PAGEDOWN" {
-        e = envSet(e, "overlayScroll", toInt(envGet(e, "overlayScroll")) + toInt(envGet(e, "rows")) - 4); emit e
+        e = kvSet(e, "overlayScroll", toInt(kvGet(e, "overlayScroll")) + toInt(kvGet(e, "rows")) - 4); emit e
     }
     if k == "PAGEUP" {
-        let s = toInt(envGet(e, "overlayScroll")) - (toInt(envGet(e, "rows")) - 4)
+        let s = toInt(kvGet(e, "overlayScroll")) - (toInt(kvGet(e, "rows")) - 4)
         if s < 0 { s = 0 }
-        e = envSet(e, "overlayScroll", s); emit e
+        e = kvSet(e, "overlayScroll", s); emit e
     }
     emit e
 }
@@ -923,16 +924,16 @@ func _handleOverlayKey(e, k) {
 // ── Main loop ───────────────────────────────────────────────────
 
 func edRun(e) {
-    while toInt(envGet(e, "running")) == 1 {
+    while toInt(kvGet(e, "running")) == 1 {
         e = edRender(e)
         let k = tReadKey()
         if k == "EOF" {
-            e = envSet(e, "running", 0)
-        } else if toInt(envGet(e, "pkOpen")) == 1 {
+            e = kvSet(e, "running", 0)
+        } else if toInt(kvGet(e, "pkOpen")) == 1 {
             e = _handlePickerKey(e, k)
-        } else if envGet(e, "overlay") != "" {
+        } else if kvGet(e, "overlay") != "" {
             e = _handleOverlayKey(e, k)
-        } else if envGet(e, "focus") == "prompt" {
+        } else if kvGet(e, "focus") == "prompt" {
             e = _handlePromptKey(e, k)
         } else {
             e = _handleEditorKey(e, k)
