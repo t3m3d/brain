@@ -740,6 +740,36 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
 - (void)zoomIn:(id)s     { CGFloat sz = gFont.pointSize + 1; gFont = [NSFont fontWithName:gFont.fontName size:sz] ?: gFont; [self reflow]; }
 - (void)zoomOut:(id)s    { CGFloat sz = gFont.pointSize - 1; if (sz >= 7) { gFont = [NSFont fontWithName:gFont.fontName size:sz] ?: gFont; [self reflow]; } }
 - (void)zoomReset:(id)s  { gFont = [NSFont fontWithName:gFont.fontName size:13] ?: gFont; [self reflow]; }
+- (NSString *)lineComment {
+    NSDictionary *m = @{@"py":@"#",@"rb":@"#",@"sh":@"#",@"bash":@"#",@"zsh":@"#",@"yaml":@"#",@"yml":@"#",@"toml":@"#",@"r":@"#",@"pl":@"#",@"ps1":@"#",@"makefile":@"#",@"mk":@"#",@"dockerfile":@"#",@"sql":@"--",@"lua":@"--",@"hs":@"--",@"el":@";",@"lisp":@";",@"clj":@";",@"ini":@";",@"tex":@"%",@"erl":@"%"};
+    return m[self.cur.path.pathExtension.lowercaseString] ?: @"//";
+}
+- (void)toggleComment:(id)s {
+    NSString *full = self.tv.string; NSRange lines = [full lineRangeForRange:self.tv.selectedRange];
+    NSString *tok = [self lineComment];
+    NSArray *ls = [[full substringWithRange:lines] componentsSeparatedByString:@"\n"];
+    BOOL allComm = YES;
+    for (NSString *l in ls) { NSString *t = [l stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]; if (t.length && ![t hasPrefix:tok]) { allComm = NO; break; } }
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSString *l in ls) {
+        NSString *t = [l stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if (t.length == 0) { [out addObject:l]; continue; }
+        if (allComm) { NSRange r = [l rangeOfString:tok];
+            NSUInteger extra = (NSMaxRange(r) < l.length && [l characterAtIndex:NSMaxRange(r)] == ' ') ? 1 : 0;
+            [out addObject:[l stringByReplacingCharactersInRange:NSMakeRange(r.location, tok.length + extra) withString:@""]]; }
+        else { NSUInteger i = 0; while (i < l.length && ([l characterAtIndex:i] == ' ' || [l characterAtIndex:i] == '\t')) i++;
+            [out addObject:[NSString stringWithFormat:@"%@%@ %@", [l substringToIndex:i], tok, [l substringFromIndex:i]]]; }
+    }
+    NSString *nb = [out componentsJoinedByString:@"\n"];
+    if ([self.tv shouldChangeTextInRange:lines replacementString:nb]) { [self.tv replaceCharactersInRange:lines withString:nb]; [self.tv didChangeText]; self.tv.selectedRange = NSMakeRange(lines.location, nb.length); }
+}
+- (void)duplicateLine:(id)s {
+    NSString *full = self.tv.string; NSRange lines = [full lineRangeForRange:self.tv.selectedRange];
+    NSString *block = [full substringWithRange:lines];
+    NSString *ins = [block hasSuffix:@"\n"] ? block : [block stringByAppendingString:@"\n"];
+    NSRange at = NSMakeRange(lines.location, 0);
+    if ([self.tv shouldChangeTextInRange:at replacementString:ins]) { [self.tv replaceCharactersInRange:at withString:ins]; [self.tv didChangeText]; }
+}
 - (void)toggleSidebar:(id)s {
     NSSplitView *sp = self.hsplit; if (!sp) return;
     BOOL collapsed = [sp isSubviewCollapsed:sp.subviews[0]] || NSWidth([sp.subviews[0] frame]) < 2;
@@ -1031,6 +1061,9 @@ static void buildMenu(void) {
     [e addItemWithTitle:@"Copy" action:@selector(copy:) keyEquivalent:@"c"];
     [e addItemWithTitle:@"Paste" action:@selector(paste:) keyEquivalent:@"v"];
     [e addItemWithTitle:@"Select All" action:@selector(selectAll:) keyEquivalent:@"a"];
+    [e addItem:[NSMenuItem separatorItem]];
+    mi(e, @"Toggle Comment", @selector(toggleComment:), @"/", gEd);
+    mi(e, @"Duplicate Line", @selector(duplicateLine:), @"d", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
     [e addItem:[NSMenuItem separatorItem]];
     [e addItemWithTitle:@"Find…" action:@selector(performFindPanelAction:) keyEquivalent:@"f"];
     eI.submenu = e;
