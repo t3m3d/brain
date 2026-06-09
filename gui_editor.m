@@ -34,6 +34,16 @@ static void initSyntax(void) {
 }
 
 // ── TextMate grammar engine (drives highlighting from a VS Code extension) ──
+@class TMGrammar;
+static NSMutableDictionary *gExtGrammar;           // VSIX-provided ext -> grammar
+static TMGrammar *gActiveGrammar;
+static NSDictionary *gExtLang, *gScopeLang;        // manifest: ext->lang, scopeName->lang
+static NSString *gGrammarDir;
+static NSMutableDictionary *gLangCache;            // lang -> TMGrammar (or NSNull)
+static void loadExtensions(void);
+static TMGrammar *loadGrammarForLang(NSString *lang);
+static TMGrammar *grammarForScope(NSString *scope);
+
 static NSColor *scopeColor(NSString *sc) {
     if (!sc) return nil;
     if ([sc hasPrefix:@"comment"]) return gCm;
@@ -88,6 +98,16 @@ static NSArray<TMRule *> *tmCompile(NSArray *raw, TMGrammar *g, int depth);
         NSArray *r = tmCompile(raw, self, depth+1);
         self.cache[nm] = r; return r;
     }
+    // cross-grammar include: "source.css", "text.html.basic#tag", etc.
+    NSArray *parts = [inc componentsSeparatedByString:@"#"];
+    NSString *scope = parts[0];
+    if (scope.length) {
+        TMGrammar *other = grammarForScope(scope);
+        if (other && other != self) {
+            if (parts.count > 1) return [other resolve:[@"#" stringByAppendingString:parts[1]] depth:depth+1];
+            return other.rules;
+        }
+    }
     return @[];
 }
 @end
@@ -122,6 +142,21 @@ static TMGrammar *tmLoad(NSString *jsonPath) {
     return g;
 }
 
+// Lazily load + compile a bundled grammar by language name (cycle-guarded).
+static TMGrammar *loadGrammarForLang(NSString *lang) {
+    if (!lang) return nil;
+    id c = gLangCache[lang]; if (c) return (c == [NSNull null]) ? nil : c;
+    NSData *data = [NSData dataWithContentsOfFile:[gGrammarDir stringByAppendingPathComponent:[lang stringByAppendingString:@".json"]]];
+    if (!data) { gLangCache[lang] = [NSNull null]; return nil; }
+    NSDictionary *j = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    if (![j isKindOfClass:[NSDictionary class]]) { gLangCache[lang] = [NSNull null]; return nil; }
+    TMGrammar *g = [TMGrammar new]; g.repo = j[@"repository"] ?: @{}; g.cache = [NSMutableDictionary dictionary];
+    gLangCache[lang] = g;                          // cache BEFORE compile (cross-grammar cycle guard)
+    g.rules = tmCompile(j[@"patterns"] ?: @[], g, 0);
+    return g;
+}
+static TMGrammar *grammarForScope(NSString *scope) { return loadGrammarForLang(gScopeLang[scope]); }
+
 static void tmApply(NSString *text, NSRange range, NSArray<TMRule *> *rules, NSTextStorage *ts, int depth) {
     if (depth > 40 || rules.count == 0) return;
     NSUInteger pos = range.location, end = NSMaxRange(range);
@@ -151,10 +186,6 @@ static void tmApply(NSString *text, NSRange range, NSArray<TMRule *> *rules, NST
         }
     }
 }
-
-static NSMutableDictionary<NSString *, TMGrammar *> *gExtGrammar;   // file-ext -> grammar
-static TMGrammar *gActiveGrammar;
-static void loadExtensions(void);
 
 static BOOL isIdentChar(unichar c) { return (c=='_') || (c>='a'&&c<='z') || (c>='A'&&c<='Z') || (c>='0'&&c<='9'); }
 static BOOL isIdentStart(unichar c) { return (c=='_') || (c>='a'&&c<='z') || (c>='A'&&c<='Z'); }
@@ -348,7 +379,9 @@ static void highlight(NSTextStorage *ts) {
     NSString *txt = [NSString stringWithContentsOfFile:p encoding:NSUTF8StringEncoding error:nil];
     if (!txt) txt = @"";
     [self.tv setString:txt];
-    gActiveGrammar = gExtGrammar[p.pathExtension.lowercaseString];   // grammar from a VS Code extension
+    NSString *ext = p.pathExtension.lowercaseString;
+    gActiveGrammar = gExtGrammar[ext];                              // VSIX-provided grammar (e.g. Krypton)
+    if (!gActiveGrammar) gActiveGrammar = loadGrammarForLang(gExtLang[ext] ?: gExtLang[p.lastPathComponent.lowercaseString]);
     highlight(self.tv.textStorage);
     self.path = p;
     self.win.documentEdited = NO;
@@ -721,7 +754,12 @@ int main(int argc, const char *argv[]) {
         gCm = [NSColor colorWithCalibratedRed:0.45 green:0.47 blue:0.50 alpha:1];
         gNum = [NSColor colorWithCalibratedRed:0.90 green:0.62 blue:0.36 alpha:1];
         gType = [NSColor colorWithCalibratedRed:0.40 green:0.78 blue:0.74 alpha:1];
-        loadExtensions();   // grammars from installed VS Code extensions
+        gLangCache = [NSMutableDictionary dictionary];
+        gGrammarDir = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"grammars"];
+        if (![[NSFileManager defaultManager] fileExistsAtPath:gGrammarDir]) gGrammarDir = @"grammars";  // dev: cwd
+        NSData *md = [NSData dataWithContentsOfFile:[gGrammarDir stringByAppendingPathComponent:@"manifest.json"]];
+        if (md) { NSDictionary *m = [NSJSONSerialization JSONObjectWithData:md options:0 error:nil]; gExtLang = m[@"ext"]; gScopeLang = m[@"scope"]; }
+        loadExtensions();   // VS Code extensions (Krypton VSIX etc.)
 
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];

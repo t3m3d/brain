@@ -27,6 +27,13 @@ if [ -n "$VSIX" ] && [ -f "$VSIX" ]; then
   echo "==> bundled extension: $(basename "$VSIX")"
 fi
 
+# bundle the multi-language TextMate grammars
+if [ -d grammars ]; then
+  mkdir -p "$APP/Contents/Resources/grammars"
+  cp grammars/*.json "$APP/Contents/Resources/grammars/" 2>/dev/null
+  echo "==> bundled $(ls grammars/*.json | wc -l | tr -d ' ') grammar files"
+fi
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
