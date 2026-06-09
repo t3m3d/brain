@@ -235,6 +235,7 @@ static void highlight(NSTextStorage *ts) {
 // ── Line-number ruler ──────────────────────────────────────────────────────
 @class Editor;
 static Editor *gEd;
+static NSMutableDictionary *gGitLines;   // line# -> @"a"/@"m"/@"d" (git gutter)
 @interface LineRuler : NSRulerView
 @property (weak) NSTextView *tv;
 @end
@@ -258,7 +259,7 @@ static Editor *gEd;
         NSRect lrect = [lm lineFragmentRectForGlyphAtIndex:gr.location effectiveRange:NULL];
         CGFloat y = lrect.origin.y + yinset - NSMinY([tv visibleRect]);
         if (y > NSMaxY(rect)) break;
-        NSString *gt = gEd.gitLines[@((long)line)];
+        NSString *gt = gGitLines[@((long)line)];
         if (gt) {
             NSColor *gc = [gt isEqualToString:@"a"] ? [NSColor colorWithCalibratedRed:0.30 green:0.72 blue:0.40 alpha:1]
                         : [gt isEqualToString:@"d"] ? [NSColor colorWithCalibratedRed:0.85 green:0.32 blue:0.32 alpha:1]
@@ -495,7 +496,6 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
 @property (strong) FileNode *root;
 @property (strong) NSOutlineView *outline;
 @property (strong) NSRulerView *ruler;
-@property (strong) NSMutableDictionary *gitLines;   // line# -> @"a"/@"m"/@"d"
 @property (strong) NSString *branch;
 @property (strong) NSPanel *qpPanel;
 @property (strong) NSTableView *qpTable;
@@ -793,7 +793,7 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
     return [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] ?: @"";
 }
 - (void)computeGit {
-    self.gitLines = [NSMutableDictionary dictionary]; self.branch = nil;
+    gGitLines = [NSMutableDictionary dictionary]; self.branch = nil;
     if (!self.cur.path) { [self.ruler setNeedsDisplay:YES]; return; }
     NSString *dir = [self.cur.path stringByDeletingLastPathComponent];
     NSString *br = [[self gitRun:@[@"-C", dir, @"rev-parse", @"--abbrev-ref", @"HEAD"]] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -804,9 +804,9 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
         NSScanner *sc = [NSScanner scannerWithString:ln]; sc.charactersToBeSkipped = nil;
         [sc scanString:@"@@ -" intoString:nil]; int a=0,b=1; [sc scanInt:&a]; if ([sc scanString:@"," intoString:nil]) [sc scanInt:&b];
         [sc scanString:@" +" intoString:nil]; int c=0,dd=1; [sc scanInt:&c]; if ([sc scanString:@"," intoString:nil]) [sc scanInt:&dd];
-        if (dd == 0) { self.gitLines[@(c)] = @"d"; continue; }
+        if (dd == 0) { gGitLines[@(c)] = @"d"; continue; }
         NSString *type = (b == 0) ? @"a" : @"m";
-        for (int i = 0; i < dd; i++) self.gitLines[@(c+i)] = type;
+        for (int i = 0; i < dd; i++) gGitLines[@(c+i)] = type;
     }
     [self.ruler setNeedsDisplay:YES]; [self updateStatus];
 }
