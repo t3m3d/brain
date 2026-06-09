@@ -674,6 +674,54 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
     FileNode *n = [self.outline itemAtRow:r];
     if (n && !n.isDir) [self loadPath:n.path];
 }
+// --- sidebar file operations (context menu) ---
+- (FileNode *)clickedNode { NSInteger r = self.outline.clickedRow; if (r < 0) r = self.outline.selectedRow; return (r >= 0) ? [self.outline itemAtRow:r] : self.root; }
+- (FileNode *)findNode:(NSString *)path under:(FileNode *)n {
+    if (!n) return nil; if ([n.path isEqualToString:path]) return n;
+    if (n.loaded) for (FileNode *c in n.kids) { FileNode *f = [self findNode:path under:c]; if (f) return f; }
+    return nil;
+}
+- (void)reloadDir:(NSString *)path {
+    FileNode *n = [self findNode:path under:self.root];
+    if (n) { n.loaded = NO; n.kids = nil; [self.outline reloadItem:(n == self.root ? nil : n) reloadChildren:YES]; if (n != self.root) [self.outline expandItem:n]; }
+    else [self.outline reloadData];
+}
+- (NSString *)prompt:(NSString *)title def:(NSString *)def {
+    NSAlert *a = [[NSAlert alloc] init]; a.messageText = title;
+    NSTextField *inp = [[NSTextField alloc] initWithFrame:NSMakeRect(0,0,260,24)]; inp.stringValue = def ?: @"";
+    a.accessoryView = inp; [a addButtonWithTitle:@"OK"]; [a addButtonWithTitle:@"Cancel"];
+    [a.window setInitialFirstResponder:inp];
+    if ([a runModal] != NSAlertFirstButtonReturn) return nil;
+    return inp.stringValue.length ? inp.stringValue : nil;
+}
+- (NSString *)dirOfClicked { FileNode *n = [self clickedNode]; if (!n) return self.root.path; return n.isDir ? n.path : [n.path stringByDeletingLastPathComponent]; }
+- (void)treeNewFile:(id)s {
+    NSString *dir = [self dirOfClicked]; NSString *nm = [self prompt:@"New File" def:@"untitled.txt"]; if (!nm) return;
+    NSString *p = [dir stringByAppendingPathComponent:nm];
+    [[NSFileManager defaultManager] createFileAtPath:p contents:[NSData data] attributes:nil];
+    [self reloadDir:dir]; [self loadPath:p];
+}
+- (void)treeNewFolder:(id)s {
+    NSString *dir = [self dirOfClicked]; NSString *nm = [self prompt:@"New Folder" def:@"folder"]; if (!nm) return;
+    [[NSFileManager defaultManager] createDirectoryAtPath:[dir stringByAppendingPathComponent:nm] withIntermediateDirectories:YES attributes:nil error:nil];
+    [self reloadDir:dir];
+}
+- (void)treeRename:(id)s {
+    FileNode *n = [self clickedNode]; if (!n || n == self.root) return;
+    NSString *nm = [self prompt:@"Rename" def:n.name]; if (!nm || [nm isEqualToString:n.name]) return;
+    NSString *dst = [[n.path stringByDeletingLastPathComponent] stringByAppendingPathComponent:nm];
+    [[NSFileManager defaultManager] moveItemAtPath:n.path toPath:dst error:nil];
+    [self reloadDir:[n.path stringByDeletingLastPathComponent]];
+}
+- (void)treeDelete:(id)s {
+    FileNode *n = [self clickedNode]; if (!n || n == self.root) return;
+    NSAlert *a = [[NSAlert alloc] init]; a.messageText = [NSString stringWithFormat:@"Move “%@” to Trash?", n.name];
+    [a addButtonWithTitle:@"Move to Trash"]; [a addButtonWithTitle:@"Cancel"];
+    if ([a runModal] != NSAlertFirstButtonReturn) return;
+    [[NSFileManager defaultManager] trashItemAtURL:[NSURL fileURLWithPath:n.path] resultingItemURL:nil error:nil];
+    [self reloadDir:[n.path stringByDeletingLastPathComponent]];
+}
+- (void)treeReveal:(id)s { FileNode *n = [self clickedNode]; if (n) [[NSWorkspace sharedWorkspace] selectFile:n.path inFileViewerRootedAtPath:@""]; }
 
 // --- Go to Line (⌘L) ---
 - (void)goToLine:(id)s {
@@ -1095,6 +1143,15 @@ int main(int argc, const char *argv[]) {
         outline.focusRingType = NSFocusRingTypeNone;
         sideScroll.documentView = outline;
         gEd.outline = outline;
+        NSMenu *treeMenu = [[NSMenu alloc] init];
+        [[treeMenu addItemWithTitle:@"New File" action:@selector(treeNewFile:) keyEquivalent:@""] setTarget:gEd];
+        [[treeMenu addItemWithTitle:@"New Folder" action:@selector(treeNewFolder:) keyEquivalent:@""] setTarget:gEd];
+        [treeMenu addItem:[NSMenuItem separatorItem]];
+        [[treeMenu addItemWithTitle:@"Rename…" action:@selector(treeRename:) keyEquivalent:@""] setTarget:gEd];
+        [[treeMenu addItemWithTitle:@"Move to Trash" action:@selector(treeDelete:) keyEquivalent:@""] setTarget:gEd];
+        [treeMenu addItem:[NSMenuItem separatorItem]];
+        [[treeMenu addItemWithTitle:@"Reveal in Finder" action:@selector(treeReveal:) keyEquivalent:@""] setTarget:gEd];
+        outline.menu = treeMenu;
 
         // sidebar = header ("EXPLORER" / project name) + tree
         NSView *leftPane = [[NSView alloc] initWithFrame:NSMakeRect(0,0,210,frame.size.height-22)];
