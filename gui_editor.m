@@ -301,6 +301,7 @@ static void highlight(NSTextStorage *ts) {
 
 // ── open document + tab bar ─────────────────────────────────────────────────
 @class Editor;
+static Editor *gEd;
 @interface KDoc : NSObject
 @property (strong) NSTextStorage *storage;
 @property (strong) NSString *path;       // nil = untitled
@@ -442,6 +443,15 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
         self.selectedRange = NSMakeRange(c, 0);
     }
 }
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)s {
+    if ([[s draggingPasteboard].types containsObject:NSPasteboardTypeFileURL]) return NSDragOperationCopy;
+    return [super draggingEntered:s];
+}
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)s {
+    NSArray *urls = [[s draggingPasteboard] readObjectsForClasses:@[[NSURL class]] options:@{NSPasteboardURLReadingFileURLsOnlyKey:@YES}];
+    if (urls.count) { for (NSURL *u in urls) { BOOL d=NO; [[NSFileManager defaultManager] fileExistsAtPath:u.path isDirectory:&d]; if (d) [gEd setFolder:u.path]; else [gEd loadPath:u.path]; } return YES; }
+    return [super performDragOperation:s];
+}
 @end
 
 @interface Editor : NSObject <NSTextStorageDelegate, NSWindowDelegate, NSToolbarDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate, NSControlTextEditingDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextViewDelegate>
@@ -453,6 +463,7 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
 @property (strong) KTabBar *tabBar;
 @property (strong) KTermView *term;
 @property (strong) NSSplitView *vsplit;
+@property (strong) NSSplitView *hsplit;
 @property (assign) BOOL termShown;
 @property (strong) NSTextField *status;
 @property (strong) FileNode *root;
@@ -628,6 +639,7 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
     self.root = [FileNode nodeWithPath:dir];
     [self.outline reloadData];
     self.sbHeader.stringValue = [@"  " stringByAppendingString:dir.lastPathComponent.uppercaseString];
+    [[NSUserDefaults standardUserDefaults] setObject:dir forKey:@"kcodeLastFolder"];
 }
 - (void)installExtension:(id)s {
     NSOpenPanel *o = [NSOpenPanel openPanel]; o.allowedFileTypes = @[@"vsix"]; o.canChooseDirectories = NO;
@@ -722,6 +734,16 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
     [self reloadDir:[n.path stringByDeletingLastPathComponent]];
 }
 - (void)treeReveal:(id)s { FileNode *n = [self clickedNode]; if (n) [[NSWorkspace sharedWorkspace] selectFile:n.path inFileViewerRootedAtPath:@""]; }
+// --- font zoom / view ---
+- (void)reflow { self.tv.font = gFont; for (KDoc *d in self.docs) { if (d == self.cur) highlight(d.storage); } [self.tv setNeedsDisplay:YES]; }
+- (void)zoomIn:(id)s     { CGFloat sz = gFont.pointSize + 1; gFont = [NSFont fontWithName:gFont.fontName size:sz] ?: gFont; [self reflow]; }
+- (void)zoomOut:(id)s    { CGFloat sz = gFont.pointSize - 1; if (sz >= 7) { gFont = [NSFont fontWithName:gFont.fontName size:sz] ?: gFont; [self reflow]; } }
+- (void)zoomReset:(id)s  { gFont = [NSFont fontWithName:gFont.fontName size:13] ?: gFont; [self reflow]; }
+- (void)toggleSidebar:(id)s {
+    NSSplitView *sp = self.hsplit; if (!sp) return;
+    BOOL collapsed = [sp isSubviewCollapsed:sp.subviews[0]] || NSWidth([sp.subviews[0] frame]) < 2;
+    [sp setPosition:(collapsed ? 210 : 0) ofDividerAtIndex:0];
+}
 
 // --- Go to Line (⌘L) ---
 - (void)goToLine:(id)s {
@@ -966,8 +988,6 @@ static BOOL fuzzy(NSString *hay, NSString *needle) {
 
 static NSString *_shq(NSString *s) { return [NSString stringWithFormat:@"'%@'", [s stringByReplacingOccurrencesOfString:@"'" withString:@"'\\''"]]; }
 
-static Editor *gEd;
-
 static NSMenuItem *mi(NSMenu *m, NSString *t, SEL a, NSString *k, id target) {
     NSMenuItem *it = [m addItemWithTitle:t action:a keyEquivalent:k]; it.target = target; return it;
 }
@@ -1009,6 +1029,16 @@ static void buildMenu(void) {
     [e addItem:[NSMenuItem separatorItem]];
     [e addItemWithTitle:@"Find…" action:@selector(performFindPanelAction:) keyEquivalent:@"f"];
     eI.submenu = e;
+    // View
+    NSMenuItem *vI = [[NSMenuItem alloc] init]; [main addItem:vI];
+    NSMenu *v = [[NSMenu alloc] initWithTitle:@"View"];
+    mi(v, @"Bigger", @selector(zoomIn:), @"+", gEd);
+    mi(v, @"Default Size", @selector(zoomReset:), @"0", gEd);
+    mi(v, @"Smaller", @selector(zoomOut:), @"-", gEd);
+    [v addItem:[NSMenuItem separatorItem]];
+    mi(v, @"Toggle Sidebar", @selector(toggleSidebar:), @"\\", gEd);
+    mi(v, @"Toggle Terminal", @selector(toggleTerminal:), @"`", gEd).keyEquivalentModifierMask = NSEventModifierFlagControl;
+    vI.submenu = v;
     // Navigate
     NSMenuItem *nI = [[NSMenuItem alloc] init]; [main addItem:nI];
     NSMenu *nav = [[NSMenu alloc] initWithTitle:@"Navigate"];
@@ -1019,8 +1049,6 @@ static void buildMenu(void) {
     [nav addItem:[NSMenuItem separatorItem]];
     mi(nav, @"Next Tab", @selector(nextTab:), @"]", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
     mi(nav, @"Previous Tab", @selector(prevTab:), @"[", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
-    [nav addItem:[NSMenuItem separatorItem]];
-    mi(nav, @"Toggle Terminal", @selector(toggleTerminal:), @"`", gEd).keyEquivalentModifierMask = NSEventModifierFlagControl;
     nI.submenu = nav;
     // Window + Help
     NSMenuItem *wI = [[NSMenuItem alloc] init]; [main addItem:wI];
@@ -1117,6 +1145,7 @@ int main(int argc, const char *argv[]) {
         tv.automaticTextReplacementEnabled = NO;
         tv.automaticSpellingCorrectionEnabled = NO;
         tv.richText = NO; tv.allowsUndo = YES;
+        [tv registerForDraggedTypes:@[NSPasteboardTypeFileURL]];   // drag files in to open
         tv.textStorage.delegate = gEd;
         scroll.documentView = tv;
 
@@ -1197,6 +1226,7 @@ int main(int argc, const char *argv[]) {
         [rightPane addSubview:tabBar]; [rightPane addSubview:vsplit];
         [split addSubview:leftPane]; [split addSubview:rightPane];
         [split adjustSubviews]; [split setPosition:210 ofDividerAtIndex:0];
+        gEd.hsplit = split;
 
         NSView *container = [[NSView alloc] initWithFrame:frame];
         container.autoresizesSubviews = YES;
@@ -1227,12 +1257,17 @@ int main(int argc, const char *argv[]) {
             if ([[NSFileManager defaultManager] fileExistsAtPath:p isDirectory:&d]) {
                 if (d) [gEd setFolder:p]; else [gEd loadPath:p];
             }
+        } else {
+            NSString *last = [[NSUserDefaults standardUserDefaults] stringForKey:@"kcodeLastFolder"];
+            if (last && [[NSFileManager defaultManager] fileExistsAtPath:last]) [gEd setFolder:last];   // reopen last project
         }
         if (gEd.docs.count == 0) [gEd newDoc:nil];     // always one open document
         [gEd applyTitle];
         [gEd updateStatus];
 
-        [win center]; [win makeKeyAndOrderFront:nil]; [win makeFirstResponder:tv];
+        [win setFrameAutosaveName:@"kcodeMain"];   // remember size + position
+        if (NSEqualRects(win.frame, NSMakeRect(0,0,820,560)) || !win.frameAutosaveName) [win center];
+        [win makeKeyAndOrderFront:nil]; [win makeFirstResponder:tv];
         [NSApp activateIgnoringOtherApps:YES];
         [NSApp run];
     }
