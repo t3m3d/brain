@@ -19,6 +19,14 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp kcode-gui "$APP/Contents/MacOS/kcode-gui"
 [ -f kcode.icns ] && cp kcode.icns "$APP/Contents/Resources/kcode.icns"
 
+# bundle the Krypton VS Code extension — its TextMate grammar drives highlighting
+VSIX="$(ls ../krypton/extensions/krypton-language-*.vsix 2>/dev/null | tail -1)"
+if [ -n "$VSIX" ] && [ -f "$VSIX" ]; then
+  mkdir -p "$APP/Contents/Resources/extensions/krypton"
+  unzip -o -q "$VSIX" -d "$APP/Contents/Resources/extensions/krypton"
+  echo "==> bundled extension: $(basename "$VSIX")"
+fi
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

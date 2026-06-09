@@ -33,6 +33,129 @@ static void initSyntax(void) {
     gBuiltinSet = [NSSet setWithArray:bi];
 }
 
+// ── TextMate grammar engine (drives highlighting from a VS Code extension) ──
+static NSColor *scopeColor(NSString *sc) {
+    if (!sc) return nil;
+    if ([sc hasPrefix:@"comment"]) return gCm;
+    if ([sc hasPrefix:@"string"]) return gStr;
+    if ([sc hasPrefix:@"constant.numeric"]) return gNum;
+    if ([sc hasPrefix:@"constant"] || [sc hasPrefix:@"support.constant"]) return gNum;
+    if ([sc hasPrefix:@"keyword"] || [sc hasPrefix:@"storage"]) return gKw;
+    if ([sc hasPrefix:@"variable.language"]) return gKw;
+    if ([sc hasPrefix:@"entity.name.function"] || [sc hasPrefix:@"support.function"] || [sc hasPrefix:@"meta.function-call"]) return gBuiltin;
+    if ([sc hasPrefix:@"entity.name.type"] || [sc hasPrefix:@"support.type"] || [sc hasPrefix:@"entity.name.class"] || [sc hasPrefix:@"support.class"]) return gType;
+    return nil;
+}
+
+@interface TMRule : NSObject
+@property NSRegularExpression *re;     // match, or begin
+@property NSRegularExpression *end;    // nil for a plain match rule
+@property NSString *scope, *contentScope;
+@property NSDictionary *caps, *beginCaps, *endCaps;   // @(idx) -> scope string
+@property NSArray<TMRule *> *subs;
+@end
+@implementation TMRule @end
+
+static NSRegularExpression *tmRe(NSString *p) {
+    if (!p) return nil;
+    NSError *e = nil;
+    NSRegularExpression *r = [NSRegularExpression regularExpressionWithPattern:p options:0 error:&e];
+    return r;   // nil on incompatible (Oniguruma-only) patterns -> rule skipped
+}
+static NSDictionary *tmCaps(NSDictionary *c) {
+    if (!c) return nil;
+    NSMutableDictionary *m = [NSMutableDictionary dictionary];
+    for (NSString *k in c) { NSString *nm = c[k][@"name"]; if (nm) m[@([k intValue])] = nm; }
+    return m;
+}
+
+@interface TMGrammar : NSObject
+@property NSArray<TMRule *> *rules;
+@property NSDictionary *repo;        // name -> raw json
+@property NSMutableDictionary *cache;
+@end
+@implementation TMGrammar
+static NSArray<TMRule *> *tmCompile(NSArray *raw, TMGrammar *g, int depth);
+- (NSArray<TMRule *> *)resolve:(NSString *)inc depth:(int)depth {
+    if (depth > 12) return @[];
+    if ([inc isEqualToString:@"$self"]) return self.rules;
+    if ([inc hasPrefix:@"#"]) {
+        NSString *nm = [inc substringFromIndex:1];
+        if (self.cache[nm]) return self.cache[nm];
+        self.cache[nm] = @[];                                   // cycle guard
+        id rep = self.repo[nm]; if (!rep) return @[];
+        NSArray *raw = rep[@"patterns"] ?: @[rep];
+        NSArray *r = tmCompile(raw, self, depth+1);
+        self.cache[nm] = r; return r;
+    }
+    return @[];
+}
+@end
+
+static NSArray<TMRule *> *tmCompile(NSArray *raw, TMGrammar *g, int depth) {
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSDictionary *d in raw) {
+        if (![d isKindOfClass:[NSDictionary class]]) continue;
+        NSString *inc = d[@"include"];
+        if (inc) { [out addObjectsFromArray:[g resolve:inc depth:depth]]; continue; }
+        TMRule *r = [TMRule new];
+        r.scope = d[@"name"]; r.contentScope = d[@"contentName"];
+        if (d[@"match"]) { r.re = tmRe(d[@"match"]); r.caps = tmCaps(d[@"captures"]); if (!r.re) continue; }
+        else if (d[@"begin"]) {
+            r.re = tmRe(d[@"begin"]); r.end = tmRe(d[@"end"]);
+            r.beginCaps = tmCaps(d[@"beginCaptures"] ?: d[@"captures"]);
+            r.endCaps = tmCaps(d[@"endCaptures"] ?: d[@"captures"]);
+            r.subs = d[@"patterns"] ? tmCompile(d[@"patterns"], g, depth+1) : @[];
+            if (!r.re) continue;
+        } else continue;
+        [out addObject:r];
+    }
+    return out;
+}
+
+static TMGrammar *tmLoad(NSString *jsonPath) {
+    NSData *data = [NSData dataWithContentsOfFile:jsonPath]; if (!data) return nil;
+    NSDictionary *j = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    if (![j isKindOfClass:[NSDictionary class]]) return nil;
+    TMGrammar *g = [TMGrammar new]; g.repo = j[@"repository"] ?: @{}; g.cache = [NSMutableDictionary dictionary];
+    g.rules = tmCompile(j[@"patterns"] ?: @[], g, 0);
+    return g;
+}
+
+static void tmApply(NSString *text, NSRange range, NSArray<TMRule *> *rules, NSTextStorage *ts, int depth) {
+    if (depth > 40 || rules.count == 0) return;
+    NSUInteger pos = range.location, end = NSMaxRange(range);
+    while (pos < end) {
+        TMRule *best = nil; NSTextCheckingResult *bestM = nil; NSUInteger bestStart = end;
+        for (TMRule *r in rules) {
+            NSTextCheckingResult *m = [r.re firstMatchInString:text options:0 range:NSMakeRange(pos, end-pos)];
+            if (m && m.range.location < bestStart) { bestStart = m.range.location; bestM = m; best = r; }
+        }
+        if (!best) break;
+        if (!best.end) {                                        // simple match
+            if (best.scope) { NSColor *c = scopeColor(best.scope); if (c) [ts addAttribute:NSForegroundColorAttributeName value:c range:bestM.range]; }
+            if (best.caps) for (NSNumber *idx in best.caps) { if (idx.intValue < (int)bestM.numberOfRanges) { NSRange cr = [bestM rangeAtIndex:idx.intValue]; NSColor *c = scopeColor(best.caps[idx]); if (c && cr.location != NSNotFound) [ts addAttribute:NSForegroundColorAttributeName value:c range:cr]; } }
+            pos = NSMaxRange(bestM.range); if (NSMaxRange(bestM.range) <= bestStart) pos = bestStart + 1;
+        } else {                                                // begin/end region
+            NSColor *bc = scopeColor(best.scope); if (bc) [ts addAttribute:NSForegroundColorAttributeName value:bc range:bestM.range];
+            NSUInteger cStart = NSMaxRange(bestM.range);
+            NSTextCheckingResult *em = [best.end firstMatchInString:text options:0 range:NSMakeRange(cStart, end-cStart)];
+            NSUInteger cEnd = em ? em.range.location : end;
+            NSRange content = NSMakeRange(cStart, cEnd > cStart ? cEnd - cStart : 0);
+            if (best.contentScope) { NSColor *cc = scopeColor(best.contentScope); if (cc) [ts addAttribute:NSForegroundColorAttributeName value:cc range:content]; }
+            else if (bc) [ts addAttribute:NSForegroundColorAttributeName value:bc range:content];
+            if (best.subs.count) tmApply(text, content, best.subs, ts, depth+1);
+            if (em) { NSColor *ec = scopeColor(best.scope); if (ec) [ts addAttribute:NSForegroundColorAttributeName value:ec range:em.range]; pos = NSMaxRange(em.range); }
+            else pos = end;
+            if (pos <= bestStart) pos = bestStart + 1;
+        }
+    }
+}
+
+static NSMutableDictionary<NSString *, TMGrammar *> *gExtGrammar;   // file-ext -> grammar
+static TMGrammar *gActiveGrammar;
+static void loadExtensions(void);
+
 static BOOL isIdentChar(unichar c) { return (c=='_') || (c>='a'&&c<='z') || (c>='A'&&c<='Z') || (c>='0'&&c<='9'); }
 static BOOL isIdentStart(unichar c) { return (c=='_') || (c>='a'&&c<='z') || (c>='A'&&c<='Z'); }
 
@@ -44,6 +167,7 @@ static void highlight(NSTextStorage *ts) {
     [ts beginEditing];
     [ts addAttribute:NSForegroundColorAttributeName value:gFg range:NSMakeRange(0, n)];
     [ts addAttribute:NSFontAttributeName value:gFont range:NSMakeRange(0, n)];
+    if (gActiveGrammar) { tmApply(ts.string, NSMakeRange(0, n), gActiveGrammar.rules, ts, 0); [ts endEditing]; return; }
     NSUInteger i = 0;
     while (i < n) {
         unichar c = [s characterAtIndex:i];
@@ -224,6 +348,7 @@ static void highlight(NSTextStorage *ts) {
     NSString *txt = [NSString stringWithContentsOfFile:p encoding:NSUTF8StringEncoding error:nil];
     if (!txt) txt = @"";
     [self.tv setString:txt];
+    gActiveGrammar = gExtGrammar[p.pathExtension.lowercaseString];   // grammar from a VS Code extension
     highlight(self.tv.textStorage);
     self.path = p;
     self.win.documentEdited = NO;
@@ -312,6 +437,23 @@ static void highlight(NSTextStorage *ts) {
     self.root = [FileNode nodeWithPath:dir];
     [self.outline reloadData];
     self.sbHeader.stringValue = [@"  " stringByAppendingString:dir.lastPathComponent.uppercaseString];
+}
+- (void)installExtension:(id)s {
+    NSOpenPanel *o = [NSOpenPanel openPanel]; o.allowedFileTypes = @[@"vsix"]; o.canChooseDirectories = NO;
+    if ([o runModal] != NSModalResponseOK || !o.URLs.count) return;
+    NSString *vsix = o.URLs[0].path;
+    NSString *name = vsix.lastPathComponent.stringByDeletingPathExtension;
+    NSString *dest = [[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/kcode/extensions"] stringByAppendingPathComponent:name];
+    [[NSFileManager defaultManager] removeItemAtPath:dest error:nil];
+    [[NSFileManager defaultManager] createDirectoryAtPath:dest withIntermediateDirectories:YES attributes:nil error:nil];
+    NSTask *t = [NSTask new]; t.executableURL = [NSURL fileURLWithPath:@"/usr/bin/unzip"];
+    t.arguments = @[@"-o", @"-q", vsix, @"-d", dest];
+    [t launchAndReturnError:nil]; [t waitUntilExit];
+    loadExtensions();
+    if (self.path) { gActiveGrammar = gExtGrammar[self.path.pathExtension.lowercaseString]; highlight(self.tv.textStorage); }
+    NSAlert *a = [[NSAlert alloc] init]; a.messageText = [NSString stringWithFormat:@"Installed extension: %@", name];
+    a.informativeText = [NSString stringWithFormat:@"%lu file types now grammar-highlighted.", (unsigned long)gExtGrammar.count];
+    [a addButtonWithTitle:@"OK"]; [a beginSheetModalForWindow:self.win completionHandler:nil];
 }
 - (NSInteger)outlineView:(NSOutlineView *)ov numberOfChildrenOfItem:(id)item {
     FileNode *n = item ?: self.root; return n ? n.children.count : 0;
@@ -497,6 +639,8 @@ static void buildMenu(void) {
     mi(f, @"Open…", @selector(openDoc:), @"o", gEd);
     mi(f, @"Open Folder…", @selector(openFolder:), @"O", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
     [f addItem:[NSMenuItem separatorItem]];
+    mi(f, @"Install Extension…", @selector(installExtension:), @"", gEd);
+    [f addItem:[NSMenuItem separatorItem]];
     mi(f, @"Save", @selector(saveDoc:), @"s", gEd);
     mi(f, @"Save As…", @selector(saveAs:), @"S", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
     [f addItem:[NSMenuItem separatorItem]];
@@ -538,6 +682,32 @@ static void buildMenu(void) {
     [NSApp setHelpMenu:h];
 }
 
+// Scan bundled + user extension dirs for VS Code extensions; load their grammars.
+static void loadExtensions(void) {
+    gExtGrammar = [NSMutableDictionary dictionary];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray *dirs = [NSMutableArray array];
+    NSString *be = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"extensions"]; if (be) [dirs addObject:be];
+    [dirs addObject:[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/kcode/extensions"]];
+    for (NSString *dir in dirs) {
+        for (NSString *sub in [fm contentsOfDirectoryAtPath:dir error:nil]) {
+            NSString *extDir = [dir stringByAppendingPathComponent:sub];
+            NSString *pkgPath = [extDir stringByAppendingPathComponent:@"package.json"];
+            if (![fm fileExistsAtPath:pkgPath]) { extDir = [extDir stringByAppendingPathComponent:@"extension"]; pkgPath = [extDir stringByAppendingPathComponent:@"package.json"]; }  // VSIX layout
+            NSData *pd = [NSData dataWithContentsOfFile:pkgPath]; if (!pd) continue;
+            NSDictionary *pkg = [NSJSONSerialization JSONObjectWithData:pd options:0 error:nil];
+            NSDictionary *contrib = pkg[@"contributes"]; if (![contrib isKindOfClass:[NSDictionary class]]) continue;
+            NSMutableDictionary *langExts = [NSMutableDictionary dictionary];
+            for (NSDictionary *l in contrib[@"languages"]) if (l[@"id"] && l[@"extensions"]) langExts[l[@"id"]] = l[@"extensions"];
+            for (NSDictionary *gr in contrib[@"grammars"]) {
+                if (!gr[@"path"]) continue;
+                TMGrammar *g = tmLoad([extDir stringByAppendingPathComponent:gr[@"path"]]); if (!g) continue;
+                for (NSString *e in langExts[gr[@"language"]]) gExtGrammar[([e hasPrefix:@"."]?[e substringFromIndex:1]:e).lowercaseString] = g;
+            }
+        }
+    }
+}
+
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         initSyntax();
@@ -550,6 +720,8 @@ int main(int argc, const char *argv[]) {
         gStr = [NSColor colorWithCalibratedRed:0.60 green:0.80 blue:0.42 alpha:1];
         gCm = [NSColor colorWithCalibratedRed:0.45 green:0.47 blue:0.50 alpha:1];
         gNum = [NSColor colorWithCalibratedRed:0.90 green:0.62 blue:0.36 alpha:1];
+        gType = [NSColor colorWithCalibratedRed:0.40 green:0.78 blue:0.74 alpha:1];
+        loadExtensions();   // grammars from installed VS Code extensions
 
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
