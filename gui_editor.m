@@ -73,9 +73,9 @@ static NSRegularExpression *tmRe(NSString *p) {
     return r;   // nil on incompatible (Oniguruma-only) patterns -> rule skipped
 }
 static NSDictionary *tmCaps(NSDictionary *c) {
-    if (!c) return nil;
+    if (![c isKindOfClass:[NSDictionary class]]) return nil;
     NSMutableDictionary *m = [NSMutableDictionary dictionary];
-    for (NSString *k in c) { NSString *nm = c[k][@"name"]; if (nm) m[@([k intValue])] = nm; }
+    for (NSString *k in c) { id v = c[k]; if (![v isKindOfClass:[NSDictionary class]]) continue; NSString *nm = v[@"name"]; if ([nm isKindOfClass:[NSString class]]) m[@([k intValue])] = nm; }
     return m;
 }
 
