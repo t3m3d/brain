@@ -144,13 +144,70 @@ static void highlight(NSTextStorage *ts) {
 }
 @end
 
-@interface Editor : NSObject <NSTextStorageDelegate, NSWindowDelegate, NSToolbarDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate>
+// ── editor view: current-line highlight, auto-pairs, auto-indent ────────────
+@interface KEditView : NSTextView
+@end
+@implementation KEditView
+- (void)drawViewBackgroundInRect:(NSRect)rect {
+    [super drawViewBackgroundInRect:rect];
+    if (self.selectedRange.length > 0) return;
+    NSUInteger loc = MIN(self.selectedRange.location, self.string.length);
+    NSRange lr = [self.string lineRangeForRange:NSMakeRange(loc, 0)];
+    NSRange gr = [self.layoutManager glyphRangeForCharacterRange:lr actualCharacterRange:NULL];
+    NSRect r = [self.layoutManager boundingRectForGlyphRange:gr inTextContainer:self.textContainer];
+    CGFloat y = r.origin.y + self.textContainerInset.height;
+    [[NSColor colorWithCalibratedWhite:1 alpha:0.045] set];
+    NSRectFillUsingOperation(NSMakeRect(0, y, self.bounds.size.width, r.size.height), NSCompositingOperationSourceOver);
+}
+- (void)insertText:(id)str replacementRange:(NSRange)rr {
+    NSString *s = [str isKindOfClass:[NSAttributedString class]] ? [(NSAttributedString *)str string] : str;
+    NSString *full = self.string; NSUInteger loc = self.selectedRange.location;
+    // skip over an auto-inserted closer
+    if (s.length == 1 && [@")]}\"'`" containsString:s] && loc < full.length
+        && [[full substringWithRange:NSMakeRange(loc,1)] isEqualToString:s]) {
+        self.selectedRange = NSMakeRange(loc+1, 0); return;
+    }
+    NSDictionary *pairs = @{@"(":@")", @"[":@"]", @"{":@"}", @"\"":@"\"", @"'":@"'", @"`":@"`"};
+    NSString *close = pairs[s];
+    [super insertText:s replacementRange:rr];
+    if (close && self.selectedRange.length == 0) {
+        NSUInteger l2 = self.selectedRange.location;
+        [super insertText:close replacementRange:NSMakeRange(l2,0)];
+        self.selectedRange = NSMakeRange(l2, 0);
+    }
+}
+- (void)insertNewline:(id)sender {
+    NSString *full = self.string; NSUInteger loc = self.selectedRange.location;
+    NSRange cur = [full lineRangeForRange:NSMakeRange(loc, 0)];
+    NSString *pre = [full substringWithRange:NSMakeRange(cur.location, loc - cur.location)];
+    NSUInteger i = 0; while (i < pre.length && ([pre characterAtIndex:i]==' ' || [pre characterAtIndex:i]=='\t')) i++;
+    NSString *indent = [pre substringToIndex:i];
+    NSString *trimmed = [pre stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    BOOL openBrace = [trimmed hasSuffix:@"{"] || [trimmed hasSuffix:@"("] || [trimmed hasSuffix:@"["];
+    BOOL closerNext = loc < full.length && [@")]}" containsString:[full substringWithRange:NSMakeRange(loc,1)]];
+    [super insertNewline:sender];
+    [super insertText:[indent stringByAppendingString:(openBrace ? @"    " : @"")] replacementRange:self.selectedRange];
+    if (openBrace && closerNext) {                              // {<newline-indent><cursor>\n<indent>}
+        NSUInteger c = self.selectedRange.location;
+        [super insertText:[@"\n" stringByAppendingString:indent] replacementRange:NSMakeRange(c,0)];
+        self.selectedRange = NSMakeRange(c, 0);
+    }
+}
+@end
+
+@interface Editor : NSObject <NSTextStorageDelegate, NSWindowDelegate, NSToolbarDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate, NSControlTextEditingDelegate, NSTableViewDataSource, NSTableViewDelegate>
 @property (strong) NSWindow *win;
 @property (strong) NSTextView *tv;
 @property (strong) NSString *path;     // nil = untitled
 @property (strong) NSTextField *status;
 @property (strong) FileNode *root;
 @property (strong) NSOutlineView *outline;
+@property (strong) NSPanel *qpPanel;
+@property (strong) NSTableView *qpTable;
+@property (strong) NSSearchField *qpField;
+@property (strong) NSArray<NSString *> *qpAll;       // all project file paths
+@property (strong) NSArray<NSString *> *qpHits;      // filtered
+@property (strong) NSTextField *sbHeader;
 @end
 
 @implementation Editor
@@ -254,6 +311,7 @@ static void highlight(NSTextStorage *ts) {
 - (void)setFolder:(NSString *)dir {
     self.root = [FileNode nodeWithPath:dir];
     [self.outline reloadData];
+    self.sbHeader.stringValue = [@"  " stringByAppendingString:dir.lastPathComponent.uppercaseString];
 }
 - (NSInteger)outlineView:(NSOutlineView *)ov numberOfChildrenOfItem:(id)item {
     FileNode *n = item ?: self.root; return n ? n.children.count : 0;
@@ -282,6 +340,101 @@ static void highlight(NSTextStorage *ts) {
     NSInteger r = self.outline.selectedRow; if (r < 0) return;
     FileNode *n = [self.outline itemAtRow:r];
     if (n && !n.isDir) [self loadPath:n.path];
+}
+
+// --- Go to Line (⌘L) ---
+- (void)goToLine:(id)s {
+    NSAlert *a = [[NSAlert alloc] init]; a.messageText = @"Go to Line";
+    NSTextField *inp = [[NSTextField alloc] initWithFrame:NSMakeRect(0,0,220,24)];
+    a.accessoryView = inp; [a addButtonWithTitle:@"Go"]; [a addButtonWithTitle:@"Cancel"];
+    [a.window setInitialFirstResponder:inp];
+    if ([a runModal] != NSAlertFirstButtonReturn) return;
+    int ln = inp.intValue; if (ln < 1) return;
+    NSString *full = self.tv.string; NSUInteger pos = 0; int cur = 1;
+    while (cur < ln && pos < full.length) { if ([full characterAtIndex:pos] == '\n') cur++; pos++; }
+    NSRange lr = [full lineRangeForRange:NSMakeRange(MIN(pos, full.length), 0)];
+    self.tv.selectedRange = NSMakeRange(lr.location, 0);
+    [self.tv scrollRangeToVisible:NSMakeRange(lr.location, 0)];
+    [self.win makeFirstResponder:self.tv];
+}
+
+// --- Quick Open (⌘P) ---
+- (NSArray *)gatherFiles:(NSString *)dir {
+    NSMutableArray *out = [NSMutableArray array];
+    NSDirectoryEnumerator *en = [[NSFileManager defaultManager] enumeratorAtPath:dir];
+    NSString *rel;
+    while ((rel = [en nextObject])) {
+        if ([rel.lastPathComponent hasPrefix:@"."] || [rel hasPrefix:@"dist/"] || [rel containsString:@"node_modules"] || [rel containsString:@".git/"]) {
+            if ([[en fileAttributes][NSFileType] isEqual:NSFileTypeDirectory]) [en skipDescendants];
+            continue;
+        }
+        if (![[en fileAttributes][NSFileType] isEqual:NSFileTypeDirectory]) [out addObject:rel];
+        if (out.count > 6000) break;
+    }
+    return out;
+}
+static BOOL fuzzy(NSString *hay, NSString *needle) {
+    NSUInteger hi = 0, ni = 0, hn = hay.length, nn = needle.length;
+    while (hi < hn && ni < nn) { if ([hay characterAtIndex:hi] == [needle characterAtIndex:ni]) ni++; hi++; }
+    return ni == nn;
+}
+- (void)qpFilter:(NSString *)q {
+    if (q.length == 0) self.qpHits = [self.qpAll subarrayWithRange:NSMakeRange(0, MIN(self.qpAll.count, 300))];
+    else { NSString *lq = q.lowercaseString; NSMutableArray *m = [NSMutableArray array];
+        for (NSString *p in self.qpAll) if (fuzzy(p.lowercaseString, lq)) [m addObject:p];
+        self.qpHits = m; }
+    [self.qpTable reloadData];
+    if (self.qpHits.count) [self.qpTable selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+}
+- (void)buildQuickOpen {
+    NSPanel *p = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,540,360)
+        styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskFullSizeContentView) backing:NSBackingStoreBuffered defer:NO];
+    p.titlebarAppearsTransparent = YES; p.titleVisibility = NSWindowTitleHidden; p.movableByWindowBackground = YES;
+    NSSearchField *sf = [[NSSearchField alloc] initWithFrame:NSMakeRect(10,322,520,28)];
+    sf.placeholderString = @"Go to file…  (fuzzy)"; sf.delegate = self;
+    sf.autoresizingMask = (NSViewWidthSizable|NSViewMinYMargin);
+    [p.contentView addSubview:sf];
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,540,318)];
+    sv.hasVerticalScroller = YES; sv.autoresizingMask = (NSViewWidthSizable|NSViewHeightSizable);
+    NSTableView *t = [[NSTableView alloc] initWithFrame:sv.bounds];
+    NSTableColumn *c = [[NSTableColumn alloc] initWithIdentifier:@"f"]; c.width = 520; [t addTableColumn:c];
+    t.headerView = nil; t.dataSource = self; t.delegate = self; t.rowHeight = 22;
+    t.target = self; t.doubleAction = @selector(qpOpenSelected);
+    sv.documentView = t; [p.contentView addSubview:sv];
+    self.qpPanel = p; self.qpField = sf; self.qpTable = t;
+}
+- (void)quickOpen:(id)s {
+    if (!self.root) { [self openFolder:s]; if (!self.root) return; }
+    self.qpAll = [self gatherFiles:self.root.path];
+    if (!self.qpPanel) [self buildQuickOpen];
+    self.qpField.stringValue = @""; [self qpFilter:@""];
+    [self.win beginSheet:self.qpPanel completionHandler:nil];
+    [self.qpPanel makeFirstResponder:self.qpField];
+}
+- (void)qpOpenSelected {
+    NSInteger r = self.qpTable.selectedRow;
+    [self.win endSheet:self.qpPanel];
+    if (r >= 0 && r < (NSInteger)self.qpHits.count) [self loadPath:[self.root.path stringByAppendingPathComponent:self.qpHits[r]]];
+}
+- (void)controlTextDidChange:(NSNotification *)n { if (n.object == self.qpField) [self qpFilter:self.qpField.stringValue]; }
+- (BOOL)control:(NSControl *)c textView:(NSTextView *)tv doCommandBySelector:(SEL)sel {
+    if (c != self.qpField) return NO;
+    NSInteger r = self.qpTable.selectedRow, n = self.qpHits.count;
+    if (sel == @selector(insertNewline:)) { [self qpOpenSelected]; return YES; }
+    if (sel == @selector(cancelOperation:)) { [self.win endSheet:self.qpPanel]; return YES; }
+    if (sel == @selector(moveDown:)) { if (r+1 < n) [self.qpTable selectRowIndexes:[NSIndexSet indexSetWithIndex:r+1] byExtendingSelection:NO]; [self.qpTable scrollRowToVisible:self.qpTable.selectedRow]; return YES; }
+    if (sel == @selector(moveUp:))   { if (r > 0) [self.qpTable selectRowIndexes:[NSIndexSet indexSetWithIndex:r-1] byExtendingSelection:NO]; [self.qpTable scrollRowToVisible:self.qpTable.selectedRow]; return YES; }
+    return NO;
+}
+- (NSInteger)numberOfRowsInTableView:(NSTableView *)t { return self.qpHits.count; }
+- (NSView *)tableView:(NSTableView *)t viewForTableColumn:(NSTableColumn *)c row:(NSInteger)row {
+    NSTableCellView *cell = [t makeViewWithIdentifier:@"qp" owner:self];
+    if (!cell) { cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0,0,520,22)]; cell.identifier = @"qp";
+        NSTextField *tf = [[NSTextField alloc] initWithFrame:NSMakeRect(8,2,500,18)];
+        tf.bezeled=NO; tf.editable=NO; tf.drawsBackground=NO; tf.font=[NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+        [cell addSubview:tf]; cell.textField = tf; }
+    cell.textField.stringValue = self.qpHits[row];
+    return cell;
 }
 
 // --- toolbar ---
@@ -364,6 +517,12 @@ static void buildMenu(void) {
     [e addItem:[NSMenuItem separatorItem]];
     [e addItemWithTitle:@"Find…" action:@selector(performFindPanelAction:) keyEquivalent:@"f"];
     eI.submenu = e;
+    // Navigate
+    NSMenuItem *nI = [[NSMenuItem alloc] init]; [main addItem:nI];
+    NSMenu *nav = [[NSMenu alloc] initWithTitle:@"Navigate"];
+    mi(nav, @"Quick Open…", @selector(quickOpen:), @"p", gEd);
+    mi(nav, @"Go to Line…", @selector(goToLine:), @"l", gEd);
+    nI.submenu = nav;
     // Window + Help
     NSMenuItem *wI = [[NSMenuItem alloc] init]; [main addItem:wI];
     NSMenu *w = [[NSMenu alloc] initWithTitle:@"Window"];
@@ -410,7 +569,8 @@ int main(int argc, const char *argv[]) {
         scroll.autoresizingMask = (NSViewWidthSizable|NSViewHeightSizable);
         scroll.borderType = NSNoBorder;
 
-        NSTextView *tv = [[NSTextView alloc] initWithFrame:frame];
+        KEditView *tv = [[KEditView alloc] initWithFrame:frame];
+        tv.usesFindBar = YES; tv.incrementalSearchingEnabled = YES;   // ⌘F find + replace bar
         tv.minSize = NSMakeSize(0, 0); tv.maxSize = NSMakeSize(FLT_MAX, FLT_MAX);
         tv.verticallyResizable = YES; tv.horizontallyResizable = NO;
         tv.autoresizingMask = NSViewWidthSizable;
@@ -452,11 +612,24 @@ int main(int argc, const char *argv[]) {
         sideScroll.documentView = outline;
         gEd.outline = outline;
 
+        // sidebar = header ("EXPLORER" / project name) + tree
+        NSView *leftPane = [[NSView alloc] initWithFrame:NSMakeRect(0,0,210,frame.size.height-22)];
+        leftPane.autoresizesSubviews = YES;
+        NSTextField *sbHeader = [[NSTextField alloc] initWithFrame:NSMakeRect(0, leftPane.bounds.size.height-26, 210, 26)];
+        sbHeader.editable=NO; sbHeader.bezeled=NO; sbHeader.selectable=NO; sbHeader.drawsBackground=YES;
+        sbHeader.backgroundColor = sideBg; sbHeader.textColor=[NSColor colorWithCalibratedWhite:0.66 alpha:1];
+        sbHeader.font=[NSFont systemFontOfSize:11 weight:NSFontWeightSemibold];
+        sbHeader.stringValue=@"  EXPLORER"; sbHeader.autoresizingMask=(NSViewWidthSizable|NSViewMinYMargin);
+        gEd.sbHeader = sbHeader;
+        sideScroll.frame = NSMakeRect(0,0,210,leftPane.bounds.size.height-26);
+        sideScroll.autoresizingMask = (NSViewWidthSizable|NSViewHeightSizable);
+        [leftPane addSubview:sbHeader]; [leftPane addSubview:sideScroll];
+
         // split: sidebar | editor
         NSSplitView *split = [[NSSplitView alloc] initWithFrame:NSMakeRect(0, 22, frame.size.width, frame.size.height - 22)];
         split.vertical = YES; split.dividerStyle = NSSplitViewDividerStyleThin;
         split.autoresizingMask = (NSViewWidthSizable | NSViewHeightSizable);
-        [split addSubview:sideScroll]; [split addSubview:scroll];
+        [split addSubview:leftPane]; [split addSubview:scroll];
         [split adjustSubviews]; [split setPosition:210 ofDividerAtIndex:0];
 
         NSView *container = [[NSView alloc] initWithFrame:frame];
