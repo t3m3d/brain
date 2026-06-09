@@ -313,6 +313,7 @@ static NSMutableDictionary *gGitLines;   // line# -> @"a"/@"m"/@"d" (git gutter)
 // ── open document + tab bar ─────────────────────────────────────────────────
 static void kcodeOpenPath(NSString *p);   // defined after Editor
 static NSString *mdToHTML(NSString *md);   // markdown -> html (defined later)
+static NSString *kcodeCurExt(void);        // current doc's file extension (defined after Editor)
 @interface KDoc : NSObject
 @property (strong) NSTextStorage *storage;
 @property (strong) NSString *path;       // nil = untitled
@@ -441,6 +442,19 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
 - (void)setFrameSize:(NSSize)s { [super setFrameSize:s]; [self sendResize]; }
 @end
 
+// language snippets: trigger -> body ($0 = caret)
+static NSString *kcodeSnippet(NSString *t, NSString *ext) {
+    if ([@[@"k",@"ks",@"htk"] containsObject:ext])
+        return @{@"func":@"func $0() {\n    \n}", @"just":@"just run {\n    $0\n}", @"if":@"if $0 {\n    \n}", @"while":@"while $0 {\n    \n}", @"struct":@"struct $0 {\n    \n}", @"for":@"for x in $0 {\n    \n}"}[t];
+    if ([ext isEqualToString:@"py"])
+        return @{@"def":@"def $0():\n    pass", @"class":@"class $0:\n    pass", @"if":@"if $0:\n    pass", @"for":@"for x in $0:\n    pass", @"while":@"while $0:\n    pass"}[t];
+    if ([@[@"js",@"ts",@"mjs",@"jsx",@"tsx"] containsObject:ext])
+        return @{@"func":@"function $0() {\n    \n}", @"if":@"if ($0) {\n    \n}", @"for":@"for (let i = 0; i < $0; i++) {\n    \n}", @"log":@"console.log($0)", @"arrow":@"const $0 = () => {\n    \n}"}[t];
+    if ([ext isEqualToString:@"go"])
+        return @{@"func":@"func $0() {\n    \n}", @"if":@"if $0 {\n    \n}", @"for":@"for $0 {\n    \n}", @"main":@"func main() {\n    $0\n}"}[t];
+    return nil;
+}
+
 // ── editor view: current-line highlight, auto-pairs, auto-indent ────────────
 @interface KEditView : NSTextView
 @end
@@ -493,6 +507,23 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
 - (void)keyDown:(NSEvent *)e {
     if ((e.modifierFlags & NSEventModifierFlagControl) && e.keyCode == 49) { [self complete:nil]; return; }   // ⌃Space autocomplete
     [super keyDown:e];
+}
+- (void)insertTab:(id)sender {
+    NSRange sel = self.selectedRange; NSString *s = self.string;
+    if (sel.length == 0 && sel.location > 0) {
+        NSUInteger i = sel.location, st = i; while (st > 0 && isIdentChar([s characterAtIndex:st-1])) st--;
+        NSString *word = [s substringWithRange:NSMakeRange(st, i-st)];
+        NSString *body = word.length ? kcodeSnippet(word, kcodeCurExt()) : nil;
+        if (body) {
+            NSRange rep = NSMakeRange(st, i-st);
+            NSUInteger caret = [body rangeOfString:@"$0"].location;
+            NSString *out = [body stringByReplacingOccurrencesOfString:@"$0" withString:@""];
+            if ([self shouldChangeTextInRange:rep replacementString:out]) { [self replaceCharactersInRange:rep withString:out]; [self didChangeText];
+                if (caret != NSNotFound) self.selectedRange = NSMakeRange(st + caret, 0); }
+            return;
+        }
+    }
+    [super insertTab:sender];
 }
 - (NSArray<NSString *> *)completionsForPartialWordRange:(NSRange)r indexOfSelectedItem:(NSInteger *)idx {
     NSString *s = self.string; if (r.location == NSNotFound || r.length == 0) return nil;
@@ -1250,6 +1281,7 @@ static void kcodeOpenPath(NSString *p) {
     BOOL d = NO; if (![[NSFileManager defaultManager] fileExistsAtPath:p isDirectory:&d]) return;
     if (d) [gEd setFolder:p]; else [gEd loadPath:p];
 }
+static NSString *kcodeCurExt(void) { return gEd.cur.path.pathExtension.lowercaseString; }
 
 static NSMenuItem *mi(NSMenu *m, NSString *t, SEL a, NSString *k, id target) {
     NSMenuItem *it = [m addItemWithTitle:t action:a keyEquivalent:k]; it.target = target; return it;
