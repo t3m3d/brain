@@ -319,6 +319,80 @@ static void highlight(NSTextStorage *ts) {
 @property (strong) NSMutableArray *hit;   // tab frames (NSValue) parallel to docs
 @end
 
+// ── integrated terminal: hosts the kryoterm engine, renders its frames ──────
+static NSColor *term256(int n) {
+    static const unsigned char base[16][3] = {{30,30,30},{205,49,49},{13,188,121},{229,229,16},{36,114,200},{188,63,188},{17,168,205},{204,204,204},{102,102,102},{241,76,76},{35,209,139},{245,245,67},{59,142,234},{214,112,214},{41,184,219},{255,255,255}};
+    if (n < 0) n = 7;
+    if (n < 16) return [NSColor colorWithCalibratedRed:base[n][0]/255.0 green:base[n][1]/255.0 blue:base[n][2]/255.0 alpha:1];
+    if (n < 232) { int c=n-16,r=c/36,g=(c%36)/6,b=c%6; int s[6]={0,95,135,175,215,255}; return [NSColor colorWithCalibratedRed:s[r]/255.0 green:s[g]/255.0 blue:s[b]/255.0 alpha:1]; }
+    int v = 8 + (n-232)*10; return [NSColor colorWithCalibratedRed:v/255.0 green:v/255.0 blue:v/255.0 alpha:1];
+}
+static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
+    NSMutableAttributedString *out = [[NSMutableAttributedString alloc] init];
+    const unsigned char *b = data.bytes; NSUInteger n = data.length, i = 0, run = 0;
+    NSColor *fg = [NSColor colorWithCalibratedWhite:0.82 alpha:1], *cur = fg;
+    while (i < n) {
+        if (b[i] == 0x1b && i+1 < n && b[i+1] == '[') {
+            if (i > run) { NSString *s = [[NSString alloc] initWithBytes:b+run length:i-run encoding:NSUTF8StringEncoding]; if (s) [out appendAttributedString:[[NSAttributedString alloc] initWithString:s attributes:@{NSForegroundColorAttributeName:cur, NSFontAttributeName:font}]]; }
+            NSUInteger j = i+2; int code = 0, have = 0, stage = 0, newc = -2;
+            while (j < n) { unsigned char p = b[j];
+                if (p>='0'&&p<='9'){code=code*10+(p-'0');have=1;}
+                else if (p==';'||(p>=0x40&&p<=0x7e)){ if(stage==2){newc=code;stage=0;} else if(stage==1){stage=(code==5)?2:0;} else if(code==38)stage=1; else if(code==0)newc=-1; else if(code>=30&&code<=37)newc=code-30; else if(code>=90&&code<=97)newc=code-90+8; code=0;have=0; if(p>=0x40&&p<=0x7e){ if(p=='m'){ cur=(newc==-1)?fg:(newc>=0?term256(newc):cur);} j++; break;} }
+                j++; }
+            i = j; run = i;
+        } else i++;
+    }
+    if (i > run) { NSString *s = [[NSString alloc] initWithBytes:b+run length:i-run encoding:NSUTF8StringEncoding]; if (s) [out appendAttributedString:[[NSAttributedString alloc] initWithString:s attributes:@{NSForegroundColorAttributeName:cur, NSFontAttributeName:font}]]; }
+    return out;
+}
+
+@interface KTermView : NSTextView
+@property (assign) int wfd, rfd; @property (assign) pid_t child;
+@property (assign) int cols, rows; @property (strong) NSFont *mono;
+- (void)spawn:(NSString *)engine;
+- (void)sendResize;
+@end
+@implementation KTermView
+- (BOOL)isEditable { return NO; }
+- (BOOL)acceptsFirstResponder { return YES; }
+- (void)spawn:(NSString *)engine {
+    int inp[2], outp[2]; if (pipe(inp) || pipe(outp)) return;
+    pid_t pid = fork(); if (pid < 0) return;
+    if (pid == 0) { dup2(inp[0],0); dup2(outp[1],1); dup2(outp[1],2);
+        close(inp[0]);close(inp[1]);close(outp[0]);close(outp[1]);
+        setenv("TERM","xterm-256color",1);
+        execl(engine.fileSystemRepresentation, engine.fileSystemRepresentation, "-i", (char*)NULL); _exit(127); }
+    close(inp[0]); close(outp[1]); _wfd = inp[1]; _rfd = outp[0]; _child = pid;
+    [NSThread detachNewThreadSelector:@selector(readLoop) toTarget:self withObject:nil];
+}
+- (void)readLoop {
+    NSMutableData *frame = [NSMutableData data]; unsigned char buf[8192]; ssize_t got; int rfd = _rfd;
+    while ((got = read(rfd, buf, sizeof buf)) > 0)
+        for (ssize_t i = 0; i < got; i++) { if (buf[i] == 0x0c) { NSData *s = [frame copy]; dispatch_async(dispatch_get_main_queue(), ^{ [self render:s]; }); [frame setLength:0]; } else [frame appendBytes:&buf[i] length:1]; }
+}
+- (void)render:(NSData *)snap {
+    const unsigned char *p = snap.bytes; NSUInteger n = snap.length, body = 0;
+    if (n > 0 && p[0] == 1) { NSUInteger k = 1; while (k < n && p[k] != 1) k++; if (k < n) body = k+1; }
+    NSData *bd = [snap subdataWithRange:NSMakeRange(body, n-body)];
+    [self.textStorage setAttributedString:parseTermSGR(bd, self.mono)];
+}
+- (void)keyDown:(NSEvent *)e {
+    if (_wfd < 0) return; const char *seq = NULL;
+    switch (e.keyCode) { case 126: seq="\x1b[A";break; case 125: seq="\x1b[B";break; case 124: seq="\x1b[C";break; case 123: seq="\x1b[D";break;
+        case 115: seq="\x1b[H";break; case 119: seq="\x1b[F";break; case 117: seq="\x1b[3~";break; }
+    if (seq) { write(_wfd, seq, strlen(seq)); return; }
+    NSString *ch = e.characters; if (ch.length) { const char *b = [ch UTF8String]; write(_wfd, b, strlen(b)); }
+}
+- (void)sendResize {
+    if (_wfd < 0) return;
+    int cols = (int)(self.bounds.size.width / 7.2), rows = (int)(self.bounds.size.height / 15.0);
+    if (cols < 8) cols = 8; if (rows < 2) rows = 2;
+    if (cols == _cols && rows == _rows) return; _cols = cols; _rows = rows;
+    char m[48]; int l = snprintf(m, sizeof m, "\036R,%d,%d\036", cols, rows); write(_wfd, m, l);
+}
+- (void)setFrameSize:(NSSize)s { [super setFrameSize:s]; [self sendResize]; }
+@end
+
 // ── editor view: current-line highlight, auto-pairs, auto-indent ────────────
 @interface KEditView : NSTextView
 @end
@@ -377,6 +451,9 @@ static void highlight(NSTextStorage *ts) {
 @property (strong) NSMutableArray<KDoc *> *docs;
 @property (strong) KDoc *cur;
 @property (strong) KTabBar *tabBar;
+@property (strong) KTermView *term;
+@property (strong) NSSplitView *vsplit;
+@property (assign) BOOL termShown;
 @property (strong) NSTextField *status;
 @property (strong) FileNode *root;
 @property (strong) NSOutlineView *outline;
@@ -507,6 +584,21 @@ static void highlight(NSTextStorage *ts) {
                      [bin stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""]];
     NSAppleScript *as = [[NSAppleScript alloc] initWithSource:cmd];
     [as executeAndReturnError:nil];
+}
+- (void)toggleTerminal:(id)s {
+    CGFloat H = self.vsplit.bounds.size.height;
+    if (self.termShown) {
+        [self.vsplit setPosition:H ofDividerAtIndex:0]; self.termShown = NO; [self.win makeFirstResponder:self.tv];
+    } else {
+        if (self.term.wfd < 0) {
+            NSString *macos = [[[NSBundle mainBundle] executablePath] stringByDeletingLastPathComponent];
+            NSString *eng = [macos stringByAppendingPathComponent:@"kryoterm"];
+            if (![[NSFileManager defaultManager] isExecutableFileAtPath:eng]) eng = @"../kryoterm/kryoterm";  // dev
+            if ([[NSFileManager defaultManager] isExecutableFileAtPath:eng]) [self.term spawn:eng];
+        }
+        [self.vsplit setPosition:H-220 ofDividerAtIndex:0]; self.termShown = YES;
+        [self.win makeFirstResponder:self.term]; [self.term sendResize];
+    }
 }
 - (void)showOutput:(NSString *)txt {
     NSAlert *a = [[NSAlert alloc] init];
@@ -879,6 +971,8 @@ static void buildMenu(void) {
     [nav addItem:[NSMenuItem separatorItem]];
     mi(nav, @"Next Tab", @selector(nextTab:), @"]", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
     mi(nav, @"Previous Tab", @selector(prevTab:), @"[", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
+    [nav addItem:[NSMenuItem separatorItem]];
+    mi(nav, @"Toggle Terminal", @selector(toggleTerminal:), @"`", gEd).keyEquivalentModifierMask = NSEventModifierFlagControl;
     nI.submenu = nav;
     // Window + Help
     NSMenuItem *wI = [[NSMenuItem alloc] init]; [main addItem:wI];
@@ -1024,9 +1118,26 @@ int main(int argc, const char *argv[]) {
         rightPane.autoresizesSubviews = YES;
         KTabBar *tabBar = [[KTabBar alloc] initWithFrame:NSMakeRect(0, rightPane.bounds.size.height-28, rightPane.bounds.size.width, 28)];
         tabBar.ed = gEd; tabBar.autoresizingMask = (NSViewWidthSizable|NSViewMinYMargin); gEd.tabBar = tabBar;
-        scroll.frame = NSMakeRect(0,0, rightPane.bounds.size.width, rightPane.bounds.size.height-28);
-        scroll.autoresizingMask = (NSViewWidthSizable|NSViewHeightSizable);
-        [rightPane addSubview:tabBar]; [rightPane addSubview:scroll];
+        // editor / terminal vertical split below the tab bar
+        CGFloat rpw = rightPane.bounds.size.width, rph = rightPane.bounds.size.height;
+        NSSplitView *vsplit = [[NSSplitView alloc] initWithFrame:NSMakeRect(0,0,rpw,rph-28)];
+        vsplit.vertical = NO; vsplit.dividerStyle = NSSplitViewDividerStyleThin;
+        vsplit.autoresizingMask = (NSViewWidthSizable|NSViewHeightSizable);
+        scroll.frame = vsplit.bounds; scroll.autoresizingMask = (NSViewWidthSizable|NSViewHeightSizable);
+        NSScrollView *termScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,rpw,1)];
+        termScroll.hasVerticalScroller = YES; termScroll.borderType = NSNoBorder;
+        KTermView *term = [[KTermView alloc] initWithFrame:termScroll.bounds];
+        term.wfd = -1; term.rfd = -1;
+        term.mono = [NSFont fontWithName:@"JetBrainsMono Nerd Font Mono" size:12] ?: [NSFont userFixedPitchFontOfSize:12];
+        term.backgroundColor = [NSColor colorWithCalibratedRed:0.09 green:0.09 blue:0.11 alpha:1];
+        term.minSize = NSMakeSize(0,0); term.maxSize = NSMakeSize(FLT_MAX,FLT_MAX);
+        term.verticallyResizable = YES; term.horizontallyResizable = NO; term.textContainer.widthTracksTextView = YES;
+        term.textContainerInset = NSMakeSize(6,4);
+        termScroll.documentView = term;
+        [vsplit addSubview:scroll]; [vsplit addSubview:termScroll];
+        gEd.term = term; gEd.vsplit = vsplit;
+        [vsplit adjustSubviews]; [vsplit setPosition:rph-28 ofDividerAtIndex:0];   // terminal collapsed initially
+        [rightPane addSubview:tabBar]; [rightPane addSubview:vsplit];
         [split addSubview:leftPane]; [split addSubview:rightPane];
         [split adjustSubviews]; [split setPosition:210 ofDividerAtIndex:0];
 

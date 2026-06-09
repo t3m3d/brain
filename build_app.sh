@@ -19,6 +19,13 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp kcode-gui "$APP/Contents/MacOS/kcode-gui"
 [ -f kcode.icns ] && cp kcode.icns "$APP/Contents/Resources/kcode.icns"
 
+# bundle the kryoterm engine for the integrated terminal (Ctrl-`)
+KT="../kryoterm"
+if [ -d "$KT" ]; then
+  ( cd "$KT" && kcc --native run.k -o kryoterm >/dev/null 2>&1 && codesign -s - -f kryoterm >/dev/null 2>&1 ) 2>/dev/null
+  [ -f "$KT/kryoterm" ] && cp "$KT/kryoterm" "$APP/Contents/MacOS/kryoterm" && echo "==> bundled kryoterm engine (integrated terminal)"
+fi
+
 # bundle the Krypton VS Code extension — its TextMate grammar drives highlighting
 VSIX="$(ls ../krypton/extensions/krypton-language-*.vsix 2>/dev/null | tail -1)"
 if [ -n "$VSIX" ] && [ -f "$VSIX" ]; then
