@@ -651,17 +651,27 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
     [self showOutput:[NSString stringWithFormat:@"$ kcc --native %@\n%@%@", self.path.lastPathComponent,
         log.length ? log : @"", t.terminationStatus == 0 ? @"\n✓ build ok" : [NSString stringWithFormat:@"\n✗ exit %d", t.terminationStatus]]];
 }
+- (NSString *)runCmdFor:(NSString *)path {
+    NSString *e = path.pathExtension.lowercaseString, *q = _shq(path);
+    if ([@[@"k",@"ks",@"htk"] containsObject:e]) return [NSString stringWithFormat:@"kcc --native %@ -o /tmp/krun && /tmp/krun", q];
+    if ([e isEqualToString:@"rs"]) return [NSString stringWithFormat:@"rustc %@ -o /tmp/rsrun && /tmp/rsrun", q];
+    if ([e isEqualToString:@"c"])  return [NSString stringWithFormat:@"cc %@ -o /tmp/crun && /tmp/crun", q];
+    if ([e isEqualToString:@"cpp"]||[e isEqualToString:@"cc"]||[e isEqualToString:@"cxx"]) return [NSString stringWithFormat:@"c++ %@ -o /tmp/crun && /tmp/crun", q];
+    if ([e isEqualToString:@"go"]) return [NSString stringWithFormat:@"go run %@", q];
+    if ([e isEqualToString:@"java"]) return [NSString stringWithFormat:@"java %@", q];
+    NSDictionary *m = @{@"py":@"python3",@"js":@"node",@"mjs":@"node",@"cjs":@"node",@"ts":@"deno run",@"rb":@"ruby",@"sh":@"bash",@"bash":@"bash",@"zsh":@"zsh",@"pl":@"perl",@"lua":@"lua",@"php":@"php",@"r":@"Rscript",@"swift":@"swift",@"jl":@"julia",@"ex":@"elixir",@"exs":@"elixir"};
+    NSString *i = m[e]; return i ? [NSString stringWithFormat:@"%@ %@", i, q] : nil;
+}
 - (void)run:(id)s {
-    [self build:s];
-    if (!self.path) return;
-    NSString *base = self.path.lastPathComponent.stringByDeletingPathExtension;
-    NSString *bin = [@"/tmp/" stringByAppendingString:base];
-    if (![[NSFileManager defaultManager] isExecutableFileAtPath:bin]) return;  // build failed
-    // run it in Terminal so interactive programs work
-    NSString *cmd = [NSString stringWithFormat:@"tell application \"Terminal\" to do script \"%@\"\ntell application \"Terminal\" to activate",
-                     [bin stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""]];
-    NSAppleScript *as = [[NSAppleScript alloc] initWithSource:cmd];
-    [as executeAndReturnError:nil];
+    if (!self.cur.path) { [self saveAs:s]; if (!self.cur.path) return; } else [self writeTo:self.cur.path];
+    NSString *cmd = [self runCmdFor:self.cur.path];
+    if (!cmd) { [self showOutput:@"No run command configured for this file type."]; return; }
+    NSString *full = [NSString stringWithFormat:@"cd %@ && %@\n", _shq([self.cur.path stringByDeletingLastPathComponent]), cmd];
+    BOOL fresh = !self.termShown;
+    if (fresh) [self toggleTerminal:s];                 // open + spawn the integrated terminal
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((fresh?0.6:0.05)*NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (self.term.wfd >= 0) { const char *b = [full UTF8String]; write(self.term.wfd, b, strlen(b)); }
+    });
 }
 - (void)toggleTerminal:(id)s {
     CGFloat H = self.vsplit.bounds.size.height;
