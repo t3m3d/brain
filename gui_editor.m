@@ -302,6 +302,7 @@ static void highlight(NSTextStorage *ts) {
 // ── open document + tab bar ─────────────────────────────────────────────────
 @class Editor;
 static Editor *gEd;
+static void kcodeOpenPath(NSString *p);   // defined after Editor
 @interface KDoc : NSObject
 @property (strong) NSTextStorage *storage;
 @property (strong) NSString *path;       // nil = untitled
@@ -449,7 +450,7 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
 }
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)s {
     NSArray *urls = [[s draggingPasteboard] readObjectsForClasses:@[[NSURL class]] options:@{NSPasteboardURLReadingFileURLsOnlyKey:@YES}];
-    if (urls.count) { for (NSURL *u in urls) { BOOL d=NO; [[NSFileManager defaultManager] fileExistsAtPath:u.path isDirectory:&d]; if (d) [gEd setFolder:u.path]; else [gEd loadPath:u.path]; } return YES; }
+    if (urls.count) { for (NSURL *u in urls) kcodeOpenPath(u.path); return YES; }
     return [super performDragOperation:s];
 }
 @end
@@ -987,6 +988,10 @@ static BOOL fuzzy(NSString *hay, NSString *needle) {
 @end
 
 static NSString *_shq(NSString *s) { return [NSString stringWithFormat:@"'%@'", [s stringByReplacingOccurrencesOfString:@"'" withString:@"'\\''"]]; }
+static void kcodeOpenPath(NSString *p) {
+    BOOL d = NO; if (![[NSFileManager defaultManager] fileExistsAtPath:p isDirectory:&d]) return;
+    if (d) [gEd setFolder:p]; else [gEd loadPath:p];
+}
 
 static NSMenuItem *mi(NSMenu *m, NSString *t, SEL a, NSString *k, id target) {
     NSMenuItem *it = [m addItemWithTitle:t action:a keyEquivalent:k]; it.target = target; return it;
