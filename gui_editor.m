@@ -329,6 +329,42 @@ static void kcodeOpenPath(NSString *p);   // defined after Editor
 @property (strong) NSMutableArray *hit;   // tab frames (NSValue) parallel to docs
 @end
 
+// ── minimap: code overview on the right edge ────────────────────────────────
+@interface KMinimap : NSView
+@property (weak) NSTextView *tv;
+@end
+@implementation KMinimap
+- (BOOL)isFlipped { return YES; }
+- (void)drawRect:(NSRect)r {
+    [[NSColor colorWithCalibratedRed:0.105 green:0.105 blue:0.125 alpha:1] set]; NSRectFill(self.bounds);
+    NSTextView *tv = self.tv; if (!tv || tv.string.length == 0) return;
+    NSArray *lines = [tv.string componentsSeparatedByString:@"\n"];
+    NSUInteger nl = lines.count; if (!nl) return;
+    CGFloat H = self.bounds.size.height, W = self.bounds.size.width;
+    CGFloat lh = MIN(3.0, H / nl);
+    [[NSColor colorWithCalibratedWhite:0.55 alpha:0.55] set];
+    for (NSUInteger i = 0; i < nl; i++) {
+        NSString *ln = lines[i]; NSUInteger len = ln.length; if (len == 0) continue;
+        NSUInteger lead = len - [ln stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]].length;
+        CGFloat y = i * lh; CGFloat x = 2 + MIN(lead, 20) / 20.0 * (W * 0.25);
+        CGFloat bw = MIN((double)(len - lead), 110.0) / 110.0 * (W - x - 2);
+        if (bw > 0) NSRectFill(NSMakeRect(x, y, bw, MAX(lh - 0.4, 0.8)));
+    }
+    NSRect vis = [tv visibleRect]; CGFloat docH = tv.bounds.size.height; if (docH < 1) return;
+    CGFloat vy = (vis.origin.y / docH) * H, vh = (vis.size.height / docH) * H;
+    [[NSColor colorWithCalibratedWhite:1 alpha:0.10] set]; NSRectFill(NSMakeRect(0, vy, W, vh));
+    [[NSColor colorWithCalibratedWhite:1 alpha:0.18] set]; NSFrameRect(NSMakeRect(0, vy, W, vh));
+}
+- (void)scrollFromEvent:(NSEvent *)e {
+    NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
+    NSTextView *tv = self.tv; CGFloat frac = p.y / self.bounds.size.height;
+    CGFloat target = frac * tv.bounds.size.height - [tv visibleRect].size.height / 2;
+    [tv scrollPoint:NSMakePoint(0, MAX(0, target))]; [self setNeedsDisplay:YES];
+}
+- (void)mouseDown:(NSEvent *)e { [self scrollFromEvent:e]; }
+- (void)mouseDragged:(NSEvent *)e { [self scrollFromEvent:e]; }
+@end
+
 // ── integrated terminal: hosts the kryoterm engine, renders its frames ──────
 static NSColor *term256(int n) {
     static const unsigned char base[16][3] = {{30,30,30},{205,49,49},{13,188,121},{229,229,16},{36,114,200},{188,63,188},{17,168,205},{204,204,204},{102,102,102},{241,76,76},{35,209,139},{245,245,67},{59,142,234},{214,112,214},{41,184,219},{255,255,255}};
@@ -496,6 +532,7 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
 @property (strong) FileNode *root;
 @property (strong) NSOutlineView *outline;
 @property (strong) NSRulerView *ruler;
+@property (strong) KMinimap *minimap;
 @property (strong) NSString *branch;
 @property (strong) NSPanel *qpPanel;
 @property (strong) NSTableView *qpTable;
@@ -535,7 +572,7 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
     gActiveGrammar = d.grammar;
     highlight(d.storage);
     [self.tv scrollRangeToVisible:self.tv.selectedRange];
-    [self applyTitle]; [self updateStatus]; [self.tabBar setNeedsDisplay:YES];
+    [self applyTitle]; [self updateStatus]; [self.tabBar setNeedsDisplay:YES]; [self.minimap setNeedsDisplay:YES];
     [self.win makeFirstResponder:self.tv];
     dispatch_async(dispatch_get_global_queue(0,0), ^{ dispatch_async(dispatch_get_main_queue(), ^{ [self computeGit]; }); });
 }
@@ -1077,7 +1114,7 @@ static BOOL fuzzy(NSString *hay, NSString *needle) {
 // --- syntax re-highlight on edit ---
 - (void)textStorage:(NSTextStorage *)ts didProcessEditing:(NSTextStorageEditActions)e range:(NSRange)r changeInLength:(NSInteger)dl {
     if (!(e & NSTextStorageEditedCharacters)) return;
-    dispatch_async(dispatch_get_main_queue(), ^{ highlight(ts); self.cur.dirty = YES; self.win.documentEdited = YES; [self.tabBar setNeedsDisplay:YES]; });
+    dispatch_async(dispatch_get_main_queue(), ^{ highlight(ts); self.cur.dirty = YES; self.win.documentEdited = YES; [self.tabBar setNeedsDisplay:YES]; [self.minimap setNeedsDisplay:YES]; });
 }
 - (void)toggleAutoSave:(id)s {
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
@@ -1329,7 +1366,7 @@ int main(int argc, const char *argv[]) {
         ruler.tv = tv; ruler.ruleThickness = 48; gEd.ruler = ruler;
         scroll.verticalRulerView = ruler;
         [[NSNotificationCenter defaultCenter] addObserverForName:NSTextViewDidChangeSelectionNotification object:tv queue:nil usingBlock:^(NSNotification *_n){ [ruler setNeedsDisplay:YES]; [gEd updateStatus]; [gEd highlightBrackets]; }];
-        [[NSNotificationCenter defaultCenter] addObserverForName:NSViewBoundsDidChangeNotification object:scroll.contentView queue:nil usingBlock:^(NSNotification *_n){ [ruler setNeedsDisplay:YES]; }];
+        [[NSNotificationCenter defaultCenter] addObserverForName:NSViewBoundsDidChangeNotification object:scroll.contentView queue:nil usingBlock:^(NSNotification *_n){ [ruler setNeedsDisplay:YES]; [gEd.minimap setNeedsDisplay:YES]; }];
         scroll.contentView.postsBoundsChangedNotifications = YES;
 
         // file-tree sidebar (NSOutlineView)
@@ -1394,7 +1431,14 @@ int main(int argc, const char *argv[]) {
         term.verticallyResizable = YES; term.horizontallyResizable = NO; term.textContainer.widthTracksTextView = YES;
         term.textContainerInset = NSMakeSize(6,4);
         termScroll.documentView = term;
-        [vsplit addSubview:scroll]; [vsplit addSubview:termScroll];
+        // editor area = code scroll + minimap (right)
+        NSView *editorArea = [[NSView alloc] initWithFrame:scroll.bounds]; editorArea.autoresizesSubviews = YES;
+        CGFloat mmW = 62, eaw = editorArea.bounds.size.width, eah = editorArea.bounds.size.height;
+        scroll.frame = NSMakeRect(0,0, eaw-mmW, eah); scroll.autoresizingMask = (NSViewWidthSizable|NSViewHeightSizable);
+        KMinimap *mm = [[KMinimap alloc] initWithFrame:NSMakeRect(eaw-mmW,0,mmW,eah)];
+        mm.tv = tv; mm.autoresizingMask = (NSViewMinXMargin|NSViewHeightSizable); gEd.minimap = mm;
+        [editorArea addSubview:scroll]; [editorArea addSubview:mm];
+        [vsplit addSubview:editorArea]; [vsplit addSubview:termScroll];
         gEd.term = term; gEd.vsplit = vsplit;
         [vsplit adjustSubviews]; [vsplit setPosition:rph-28 ofDividerAtIndex:0];   // terminal collapsed initially
         [rightPane addSubview:tabBar]; [rightPane addSubview:vsplit];
