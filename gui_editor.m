@@ -384,7 +384,10 @@ static void highlight(NSTextStorage *ts) {
 @property (strong) NSTableView *qpTable;
 @property (strong) NSSearchField *qpField;
 @property (strong) NSArray<NSString *> *qpAll;       // all project file paths
-@property (strong) NSArray<NSString *> *qpHits;      // filtered
+@property (strong) NSArray<NSString *> *qpHits;      // filtered display strings
+@property (assign) NSInteger qpMode;                 // 0 = files, 1 = commands
+@property (strong) NSArray *cmdLabels, *cmdSels;     // command palette
+@property (strong) NSArray *cmdHitSels;              // selectors parallel to qpHits in cmd mode
 @property (strong) NSTextField *sbHeader;
 @end
 
@@ -616,10 +619,17 @@ static BOOL fuzzy(NSString *hay, NSString *needle) {
     return ni == nn;
 }
 - (void)qpFilter:(NSString *)q {
-    if (q.length == 0) self.qpHits = [self.qpAll subarrayWithRange:NSMakeRange(0, MIN(self.qpAll.count, 300))];
-    else { NSString *lq = q.lowercaseString; NSMutableArray *m = [NSMutableArray array];
-        for (NSString *p in self.qpAll) if (fuzzy(p.lowercaseString, lq)) [m addObject:p];
-        self.qpHits = m; }
+    NSArray *src = (self.qpMode == 1) ? self.cmdLabels : self.qpAll;
+    NSArray *sels = (self.qpMode == 1) ? self.cmdSels : nil;
+    NSString *lq = q.lowercaseString;
+    NSMutableArray *hits = [NSMutableArray array], *hsel = [NSMutableArray array];
+    for (NSInteger i = 0; i < (NSInteger)src.count; i++) {
+        if (q.length == 0 || fuzzy([src[i] lowercaseString], lq)) {
+            [hits addObject:src[i]]; if (sels) [hsel addObject:sels[i]];
+            if (q.length == 0 && self.qpMode == 0 && hits.count >= 300) break;
+        }
+    }
+    self.qpHits = hits; self.cmdHitSels = (self.qpMode == 1) ? hsel : nil;
     [self.qpTable reloadData];
     if (self.qpHits.count) [self.qpTable selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
 }
@@ -644,14 +654,31 @@ static BOOL fuzzy(NSString *hay, NSString *needle) {
     if (!self.root) { [self openFolder:s]; if (!self.root) return; }
     self.qpAll = [self gatherFiles:self.root.path];
     if (!self.qpPanel) [self buildQuickOpen];
+    self.qpMode = 0; self.qpField.placeholderString = @"Go to file…  (fuzzy)";
     self.qpField.stringValue = @""; [self qpFilter:@""];
     [self.win beginSheet:self.qpPanel completionHandler:nil];
     [self.qpPanel makeFirstResponder:self.qpField];
 }
+- (void)commandPalette:(id)s {
+    self.cmdLabels = @[@"New File", @"Open File…", @"Open Folder…", @"Save", @"Save As…", @"Build", @"Run",
+                       @"Quick Open…", @"Go to Line…", @"Install Extension…", @"Next Tab", @"Previous Tab", @"Close Tab", @"New Window"];
+    self.cmdSels   = @[@"newDoc:", @"openDoc:", @"openFolder:", @"saveDoc:", @"saveAs:", @"build:", @"run:",
+                       @"quickOpen:", @"goToLine:", @"installExtension:", @"nextTab:", @"prevTab:", @"closeDoc:", @"newWindowCmd:"];
+    if (!self.qpPanel) [self buildQuickOpen];
+    self.qpMode = 1; self.qpField.placeholderString = @"Run a command…";
+    self.qpField.stringValue = @""; [self qpFilter:@""];
+    [self.win beginSheet:self.qpPanel completionHandler:nil];
+    [self.qpPanel makeFirstResponder:self.qpField];
+}
+- (void)newWindowCmd:(id)s { /* single-window for now */ [self newDoc:s]; }
 - (void)qpOpenSelected {
     NSInteger r = self.qpTable.selectedRow;
     [self.win endSheet:self.qpPanel];
-    if (r >= 0 && r < (NSInteger)self.qpHits.count) [self loadPath:[self.root.path stringByAppendingPathComponent:self.qpHits[r]]];
+    if (r < 0 || r >= (NSInteger)self.qpHits.count) return;
+    if (self.qpMode == 1) {
+        SEL sel = NSSelectorFromString(self.cmdHitSels[r]);
+        if ([self respondsToSelector:sel]) { IMP imp = [self methodForSelector:sel]; void (*fn)(id, SEL, id) = (void *)imp; fn(self, sel, nil); }
+    } else [self loadPath:[self.root.path stringByAppendingPathComponent:self.qpHits[r]]];
 }
 - (void)controlTextDidChange:(NSNotification *)n { if (n.object == self.qpField) [self qpFilter:self.qpField.stringValue]; }
 - (BOOL)control:(NSControl *)c textView:(NSTextView *)tv doCommandBySelector:(SEL)sel {
@@ -797,6 +824,7 @@ static void buildMenu(void) {
     // Navigate
     NSMenuItem *nI = [[NSMenuItem alloc] init]; [main addItem:nI];
     NSMenu *nav = [[NSMenu alloc] initWithTitle:@"Navigate"];
+    mi(nav, @"Command Palette…", @selector(commandPalette:), @"p", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
     mi(nav, @"Quick Open…", @selector(quickOpen:), @"p", gEd);
     mi(nav, @"Go to Line…", @selector(goToLine:), @"l", gEd);
     [nav addItem:[NSMenuItem separatorItem]];
