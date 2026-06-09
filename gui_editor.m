@@ -894,6 +894,22 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
     NSRange at = NSMakeRange(lines.location, 0);
     if ([self.tv shouldChangeTextInRange:at replacementString:ins]) { [self.tv replaceCharactersInRange:at withString:ins]; [self.tv didChangeText]; }
 }
+- (void)indent:(BOOL)out {
+    NSString *full = self.tv.string; NSRange lines = [full lineRangeForRange:self.tv.selectedRange];
+    NSArray *ls = [[full substringWithRange:lines] componentsSeparatedByString:@"\n"];
+    NSMutableArray *o = [NSMutableArray array];
+    for (NSUInteger i = 0; i < ls.count; i++) { NSString *l = ls[i];
+        if (l.length == 0 && i == ls.count-1) { [o addObject:l]; continue; }
+        if (out) { if ([l hasPrefix:@"\t"]) [o addObject:[l substringFromIndex:1]];
+            else { int k = 0; while (k < 4 && k < (int)l.length && [l characterAtIndex:k] == ' ') k++; [o addObject:[l substringFromIndex:k]]; } }
+        else [o addObject:[@"    " stringByAppendingString:l]];
+    }
+    NSString *nb = [o componentsJoinedByString:@"\n"];
+    if ([self.tv shouldChangeTextInRange:lines replacementString:nb]) { [self.tv replaceCharactersInRange:lines withString:nb]; [self.tv didChangeText]; self.tv.selectedRange = NSMakeRange(lines.location, nb.length); }
+}
+- (void)indentRight:(id)s { [self indent:NO]; }
+- (void)indentLeft:(id)s  { [self indent:YES]; }
+- (void)treeCopyPath:(id)s { FileNode *n = [self clickedNode]; if (n) { [[NSPasteboard generalPasteboard] clearContents]; [[NSPasteboard generalPasteboard] setString:n.path forType:NSPasteboardTypeString]; } }
 - (void)highlightBrackets {
     NSTextStorage *ts = self.tv.textStorage; NSString *s = ts.string; NSUInteger n = s.length;
     [ts removeAttribute:NSBackgroundColorAttributeName range:NSMakeRange(0, n)];
@@ -1243,6 +1259,8 @@ static void buildMenu(void) {
     [e addItem:[NSMenuItem separatorItem]];
     mi(e, @"Toggle Comment", @selector(toggleComment:), @"/", gEd);
     mi(e, @"Duplicate Line", @selector(duplicateLine:), @"d", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
+    mi(e, @"Indent", @selector(indentRight:), @"]", gEd);
+    mi(e, @"Outdent", @selector(indentLeft:), @"[", gEd);
     [e addItem:[NSMenuItem separatorItem]];
     [e addItemWithTitle:@"Find…" action:@selector(performFindPanelAction:) keyEquivalent:@"f"];
     eI.submenu = e;
@@ -1399,6 +1417,7 @@ int main(int argc, const char *argv[]) {
         [treeMenu addItem:[NSMenuItem separatorItem]];
         [[treeMenu addItemWithTitle:@"Rename…" action:@selector(treeRename:) keyEquivalent:@""] setTarget:gEd];
         [[treeMenu addItemWithTitle:@"Move to Trash" action:@selector(treeDelete:) keyEquivalent:@""] setTarget:gEd];
+        [[treeMenu addItemWithTitle:@"Copy Path" action:@selector(treeCopyPath:) keyEquivalent:@""] setTarget:gEd];
         [treeMenu addItem:[NSMenuItem separatorItem]];
         [[treeMenu addItemWithTitle:@"Reveal in Finder" action:@selector(treeReveal:) keyEquivalent:@""] setTarget:gEd];
         outline.menu = treeMenu;
