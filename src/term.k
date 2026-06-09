@@ -81,11 +81,14 @@ func tFlush()   { emit "1" }                          // fdWrite is unbuffered â
 // stdin is non-blocking; we poll for the first byte, then grab any contiguous
 // continuation bytes (the rest of an escape sequence arrives together).
 
-// Block until at least one byte is available; returns it (1+ bytes).
+// Wait up to ~250ms for a byte; return "" on timeout so the caller can re-render
+// (the editor redraws on each tick -> picks up window resizes / first paint).
 func _readBlocking() {
     let k = fdRead(0, 1)
-    while len(k) == 0 {
-        sleepUs(0, 4000)                        // ~4ms idle poll
+    let waited = 0
+    while len(k) == 0 && waited < 250 {
+        sleepUs(0, 5000)                        // 5ms poll
+        waited = waited + 5
         k = fdRead(0, 1)
     }
     emit k
@@ -179,6 +182,7 @@ func _parseMouse(body) {
 // tReadKey â€” one normalized key token (same vocabulary as before).
 func tReadKey() {
     let k = _readBlocking()
+    if len(k) == 0 { emit "" }                  // idle tick -> caller re-renders
     let b = charCode(k[0])
     if b == 27 { emit _parseEsc(_readMore()) }
     if b == 13 || b == 10 { emit "ENTER" }

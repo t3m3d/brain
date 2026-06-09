@@ -927,7 +927,9 @@ func edRun(e) {
     while toInt(kvGet(e, "running")) == 1 {
         e = edRender(e)
         let k = tReadKey()
-        if k == "EOF" {
+        if k == "" {
+            e = e                                 // idle tick — loop re-renders (catches window resize / first paint)
+        } else if k == "EOF" {
             e = kvSet(e, "running", 0)
         } else if toInt(kvGet(e, "pkOpen")) == 1 {
             e = _handlePickerKey(e, k)
