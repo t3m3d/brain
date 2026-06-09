@@ -1,29 +1,22 @@
 #!/usr/bin/env bash
-# build_app.sh — assemble kcode.app: a native macOS window for the kcode IDE.
+# build_app.sh — assemble kcode.app: a native macOS editor for Krypton.
 #
-# kcode is a pure-Krypton terminal IDE. To give it its own window (rather than
-# running inside Terminal.app) it is hosted by the kryoterm terminal surface:
-# the kryoterm GUI shim opens an NSWindow, the kryoterm engine runs kcode on a
-# pty and renders its ANSI output. The bundle's Info.plist sets KRYOTERM_EXEC=kcode
-# so the engine launches the bundled kcode instead of a shell.
+# kcode.app is a Cocoa NSTextView editor (native editing/scroll/find/undo) with
+# Krypton syntax highlighting + Build via the Krypton compiler `kcc`. The window
+# + text surface are Obj-C (Cocoa); the language + compiler are Krypton.
 set -e
 cd "$(dirname "$0")"
-KT="../kryoterm"            # sibling kryoterm repo (provides the engine + shim)
 APP="kcode.app"
 VERSION="0.3.0"
 
-echo "==> building kcode"
-./build.sh >/dev/null
-
-echo "==> building kryoterm engine + shim"
-( cd "$KT" && kcc --native run.k -o kryoterm >/dev/null 2>&1 && codesign -s - -f kryoterm >/dev/null 2>&1 && ./build_gui.sh >/dev/null && codesign -s - -f kryoterm-gui >/dev/null 2>&1 )
+echo "==> compiling kcode-gui (native editor)"
+clang -framework Cocoa -fobjc-arc -O2 -Wall gui_editor.m -o kcode-gui
+codesign -s - -f kcode-gui >/dev/null 2>&1 || true
 
 echo "==> assembling $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$KT/kryoterm-gui" "$APP/Contents/MacOS/kcode-gui"   # the window shim (CFBundleExecutable)
-cp "$KT/kryoterm"     "$APP/Contents/MacOS/kryoterm"    # the terminal engine (shim looks for this name)
-cp "./kcode"          "$APP/Contents/MacOS/kcode"       # the IDE the engine runs
+cp kcode-gui "$APP/Contents/MacOS/kcode-gui"
 [ -f kcode.icns ] && cp kcode.icns "$APP/Contents/Resources/kcode.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -41,10 +34,14 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIconFile</key>        <string>kcode</string>
     <key>NSHighResolutionCapable</key> <true/>
     <key>LSMinimumSystemVersion</key>  <string>13.0</string>
-    <key>LSEnvironment</key>
-    <dict>
-        <key>KRYOTERM_EXEC</key>       <string>kcode</string>
-    </dict>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+      <dict>
+        <key>CFBundleTypeName</key>          <string>Krypton source</string>
+        <key>CFBundleTypeExtensions</key>    <array><string>k</string><string>ks</string><string>htk</string></array>
+        <key>CFBundleTypeRole</key>          <string>Editor</string>
+      </dict>
+    </array>
 </dict>
 </plist>
 PLIST
