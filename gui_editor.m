@@ -198,7 +198,7 @@ static void highlight(NSTextStorage *ts) {
     [ts beginEditing];
     [ts addAttribute:NSForegroundColorAttributeName value:gFg range:NSMakeRange(0, n)];
     [ts addAttribute:NSFontAttributeName value:gFont range:NSMakeRange(0, n)];
-    if (gActiveGrammar) { tmApply(ts.string, NSMakeRange(0, n), gActiveGrammar.rules, ts, 0); [ts endEditing]; return; }
+    if (gActiveGrammar) { @try { tmApply(ts.string, NSMakeRange(0, n), gActiveGrammar.rules, ts, 0); } @catch (NSException *ex) { } [ts endEditing]; return; }
     NSUInteger i = 0;
     while (i < n) {
         unichar c = [s characterAtIndex:i];
