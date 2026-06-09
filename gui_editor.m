@@ -9,6 +9,7 @@
 // Build: clang -framework Cocoa -fobjc-arc -O2 gui_editor.m -o kcode-gui
 
 #import <Cocoa/Cocoa.h>
+#import <WebKit/WebKit.h>
 
 static NSFont *gFont;
 static NSColor *gBg, *gFg, *gKw, *gBuiltin, *gStr, *gCm, *gNum, *gType;
@@ -311,6 +312,7 @@ static NSMutableDictionary *gGitLines;   // line# -> @"a"/@"m"/@"d" (git gutter)
 
 // ── open document + tab bar ─────────────────────────────────────────────────
 static void kcodeOpenPath(NSString *p);   // defined after Editor
+static NSString *mdToHTML(NSString *md);   // markdown -> html (defined later)
 @interface KDoc : NSObject
 @property (strong) NSTextStorage *storage;
 @property (strong) NSString *path;       // nil = untitled
@@ -534,6 +536,8 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
 @property (strong) NSRulerView *ruler;
 @property (strong) KMinimap *minimap;
 @property (strong) NSString *branch;
+@property (strong) NSPanel *mdPanel;
+@property (strong) WKWebView *mdWeb;
 @property (strong) NSPanel *qpPanel;
 @property (strong) NSTableView *qpTable;
 @property (strong) NSSearchField *qpField;
@@ -856,6 +860,16 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
         for (int i = 0; i < dd; i++) gGitLines[@(c+i)] = type;
     }
     [self.ruler setNeedsDisplay:YES]; [self updateStatus];
+}
+- (void)markdownPreview:(id)s {
+    if (!self.mdPanel) {
+        NSPanel *p = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,620,680) styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable) backing:NSBackingStoreBuffered defer:NO];
+        p.title = @"Markdown Preview"; p.releasedWhenClosed = NO;
+        WKWebView *w = [[WKWebView alloc] initWithFrame:[p.contentView bounds]]; w.autoresizingMask = (NSViewWidthSizable|NSViewHeightSizable);
+        [p.contentView addSubview:w]; self.mdPanel = p; self.mdWeb = w; [p center];
+    }
+    [self.mdWeb loadHTMLString:mdToHTML(self.tv.string) baseURL:nil];
+    [self.mdPanel makeKeyAndOrderFront:nil];
 }
 - (void)openHelp:(id)s   { [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"https://krypton-lang.org/kcode.html"]]; }
 - (void)openGitHub:(id)s { [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"https://github.com/t3m3d/kcode"]]; }
@@ -1205,6 +1219,33 @@ static BOOL fuzzy(NSString *hay, NSString *needle) {
 @end
 
 static NSString *_shq(NSString *s) { return [NSString stringWithFormat:@"'%@'", [s stringByReplacingOccurrencesOfString:@"'" withString:@"'\\''"]]; }
+
+// minimal Markdown -> HTML (headings, code, lists, blockquote, hr, inline b/i/code/links)
+static NSString *_mdEsc(NSString *s) { s=[s stringByReplacingOccurrencesOfString:@"&" withString:@"&amp;"]; s=[s stringByReplacingOccurrencesOfString:@"<" withString:@"&lt;"]; return [s stringByReplacingOccurrencesOfString:@">" withString:@"&gt;"]; }
+static NSString *_mdInline(NSString *s) {
+    s = _mdEsc(s);
+    NSArray *subs = @[@[@"`([^`]+)`", @"<code>$1</code>"], @[@"\\*\\*([^*]+)\\*\\*", @"<strong>$1</strong>"], @[@"\\*([^*]+)\\*", @"<em>$1</em>"], @[@"\\[([^\\]]+)\\]\\(([^)]+)\\)", @"<a href=\"$2\">$1</a>"]];
+    for (NSArray *r in subs) { NSRegularExpression *re=[NSRegularExpression regularExpressionWithPattern:r[0] options:0 error:nil]; s=[re stringByReplacingMatchesInString:s options:0 range:NSMakeRange(0,s.length) withTemplate:r[1]]; }
+    return s;
+}
+static NSString *mdToHTML(NSString *md) {
+    NSMutableString *h = [NSMutableString string]; BOOL code=NO, ul=NO;
+    for (NSString *raw in [md componentsSeparatedByString:@"\n"]) {
+        NSString *l = raw; NSString *t = [l stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if ([t hasPrefix:@"```"]) { if (ul){[h appendString:@"</ul>"];ul=NO;} if (!code){[h appendString:@"<pre><code>"];code=YES;} else {[h appendString:@"</code></pre>"];code=NO;} continue; }
+        if (code) { [h appendString:_mdEsc(l)]; [h appendString:@"\n"]; continue; }
+        if (t.length == 0) { if (ul){[h appendString:@"</ul>"];ul=NO;} continue; }
+        if ([t hasPrefix:@"#"]) { if (ul){[h appendString:@"</ul>"];ul=NO;} int n=0; while(n<(int)t.length && [t characterAtIndex:n]=='#')n++; NSString *txt=[[t substringFromIndex:n] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]; [h appendFormat:@"<h%d>%@</h%d>",n,_mdInline(txt),n]; continue; }
+        if ([t isEqualToString:@"---"]||[t isEqualToString:@"***"]) { [h appendString:@"<hr>"]; continue; }
+        if ([t hasPrefix:@"> "]) { [h appendFormat:@"<blockquote>%@</blockquote>", _mdInline([t substringFromIndex:2])]; continue; }
+        if ([t hasPrefix:@"- "]||[t hasPrefix:@"* "]||[t hasPrefix:@"+ "]) { if(!ul){[h appendString:@"<ul>"];ul=YES;} [h appendFormat:@"<li>%@</li>", _mdInline([t substringFromIndex:2])]; continue; }
+        if (ul){[h appendString:@"</ul>"];ul=NO;}
+        [h appendFormat:@"<p>%@</p>", _mdInline(t)];
+    }
+    if (ul) [h appendString:@"</ul>"]; if (code) [h appendString:@"</code></pre>"];
+    NSString *css = @"<style>body{font:15px -apple-system,Helvetica;max-width:780px;margin:24px auto;padding:0 20px;color:#ddd;background:#1d1d22}h1,h2,h3{border-bottom:1px solid #333;padding-bottom:4px}code{background:#2a2a32;padding:2px 5px;border-radius:4px;font-family:ui-monospace,Menlo}pre{background:#15151a;padding:12px;border-radius:8px;overflow:auto}pre code{background:none;padding:0}a{color:#5aa0ff}blockquote{border-left:3px solid #555;margin:0;padding-left:14px;color:#aaa}</style>";
+    return [NSString stringWithFormat:@"<!doctype html><meta charset=utf-8>%@<body>%@</body>", css, h];
+}
 static void kcodeOpenPath(NSString *p) {
     BOOL d = NO; if (![[NSFileManager defaultManager] fileExistsAtPath:p isDirectory:&d]) return;
     if (d) [gEd setFolder:p]; else [gEd loadPath:p];
@@ -1271,6 +1312,7 @@ static void buildMenu(void) {
     mi(v, @"Default Size", @selector(zoomReset:), @"0", gEd);
     mi(v, @"Smaller", @selector(zoomOut:), @"-", gEd);
     [v addItem:[NSMenuItem separatorItem]];
+    mi(v, @"Markdown Preview", @selector(markdownPreview:), @"v", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
     mi(v, @"Toggle Light / Dark", @selector(toggleTheme:), @"", gEd);
     mi(v, @"Toggle Sidebar", @selector(toggleSidebar:), @"\\", gEd);
     mi(v, @"Toggle Terminal", @selector(toggleTerminal:), @"`", gEd).keyEquivalentModifierMask = NSEventModifierFlagControl;

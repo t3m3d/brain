@@ -10,7 +10,7 @@ APP="kcode.app"
 VERSION="0.3.0"
 
 echo "==> compiling kcode-gui (native editor)"
-clang -framework Cocoa -fobjc-arc -O2 -Wall gui_editor.m -o kcode-gui
+clang -framework Cocoa -framework WebKit -fobjc-arc -O2 -Wall gui_editor.m -o kcode-gui
 codesign -s - -f kcode-gui >/dev/null 2>&1 || true
 
 echo "==> assembling $APP"
