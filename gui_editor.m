@@ -256,9 +256,16 @@ static void highlight(NSTextStorage *ts) {
         NSRect lrect = [lm lineFragmentRectForGlyphAtIndex:gr.location effectiveRange:NULL];
         CGFloat y = lrect.origin.y + yinset - NSMinY([tv visibleRect]);
         if (y > NSMaxY(rect)) break;
+        NSString *gt = gEd.gitLines[@((long)line)];
+        if (gt) {
+            NSColor *gc = [gt isEqualToString:@"a"] ? [NSColor colorWithCalibratedRed:0.30 green:0.72 blue:0.40 alpha:1]
+                        : [gt isEqualToString:@"d"] ? [NSColor colorWithCalibratedRed:0.85 green:0.32 blue:0.32 alpha:1]
+                        : [NSColor colorWithCalibratedRed:0.30 green:0.55 blue:0.92 alpha:1];
+            [gc set]; NSRectFill(NSMakeRect(self.ruleThickness-3, y, 3, [gt isEqualToString:@"d"] ? 2 : 15));
+        }
         NSString *ls = [NSString stringWithFormat:@"%lu", (unsigned long)line];
         NSSize sz = [ls sizeWithAttributes:attr];
-        [ls drawAtPoint:NSMakePoint(self.ruleThickness - sz.width - 6, y + 1) withAttributes:attr];
+        [ls drawAtPoint:NSMakePoint(self.ruleThickness - sz.width - 8, y + 1) withAttributes:attr];
         line++;
         if (NSMaxRange(lr) <= idx) break;
         idx = NSMaxRange(lr);
@@ -487,6 +494,9 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
 @property (strong) NSTextField *status;
 @property (strong) FileNode *root;
 @property (strong) NSOutlineView *outline;
+@property (strong) NSRulerView *ruler;
+@property (strong) NSMutableDictionary *gitLines;   // line# -> @"a"/@"m"/@"d"
+@property (strong) NSString *branch;
 @property (strong) NSPanel *qpPanel;
 @property (strong) NSTableView *qpTable;
 @property (strong) NSSearchField *qpField;
@@ -527,6 +537,7 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
     [self.tv scrollRangeToVisible:self.tv.selectedRange];
     [self applyTitle]; [self updateStatus]; [self.tabBar setNeedsDisplay:YES];
     [self.win makeFirstResponder:self.tv];
+    dispatch_async(dispatch_get_global_queue(0,0), ^{ dispatch_async(dispatch_get_main_queue(), ^{ [self computeGit]; }); });
 }
 - (void)loadPath:(NSString *)p {
     for (KDoc *d in self.docs) if (d.path && [d.path isEqualToString:p]) { [self showDoc:d]; return; }
@@ -572,7 +583,7 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
     BOOL ok = [self.tv.string writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:nil];
     if (ok) { self.cur.path = p; self.cur.dirty = NO; self.path = p;
         self.cur.grammar = [self grammarForPath:p]; gActiveGrammar = self.cur.grammar; highlight(self.cur.storage);
-        [self applyTitle]; [self.tabBar setNeedsDisplay:YES]; }
+        [self applyTitle]; [self.tabBar setNeedsDisplay:YES]; [self computeGit]; }
     return ok;
 }
 - (void)saveDoc:(id)s {
@@ -645,8 +656,9 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
     for (NSUInteger k = 0; k < ip && k < s.length; k++) { if ([s characterAtIndex:k] == '\n') { line++; col = 1; } else col++; }
     NSString *ext = self.path ? self.path.pathExtension.uppercaseString : @"";
     NSString *lang = ext.length ? ext : @"TEXT";
-    self.status.stringValue = [NSString stringWithFormat:@"  Ln %lu, Col %lu      %@      %lu chars",
-                               (unsigned long)line, (unsigned long)col, lang, (unsigned long)s.length];
+    NSString *br = self.branch.length ? [NSString stringWithFormat:@"      ⎇ %@", self.branch] : @"";
+    self.status.stringValue = [NSString stringWithFormat:@"  Ln %lu, Col %lu      %@      %lu chars%@",
+                               (unsigned long)line, (unsigned long)col, lang, (unsigned long)s.length, br];
 }
 
 // --- file-tree sidebar ---
@@ -773,6 +785,31 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
     [self reloadDir:[n.path stringByDeletingLastPathComponent]];
 }
 - (void)treeReveal:(id)s { FileNode *n = [self clickedNode]; if (n) [[NSWorkspace sharedWorkspace] selectFile:n.path inFileViewerRootedAtPath:@""]; }
+- (NSString *)gitRun:(NSArray *)args {
+    NSTask *t = [NSTask new]; t.executableURL = [NSURL fileURLWithPath:@"/usr/bin/git"]; t.arguments = args;
+    NSPipe *p = [NSPipe pipe]; t.standardOutput = p; t.standardError = [NSPipe pipe];
+    if (![t launchAndReturnError:nil]) return @"";
+    NSData *d = [p.fileHandleForReading readDataToEndOfFile]; [t waitUntilExit];
+    return [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] ?: @"";
+}
+- (void)computeGit {
+    self.gitLines = [NSMutableDictionary dictionary]; self.branch = nil;
+    if (!self.cur.path) { [self.ruler setNeedsDisplay:YES]; return; }
+    NSString *dir = [self.cur.path stringByDeletingLastPathComponent];
+    NSString *br = [[self gitRun:@[@"-C", dir, @"rev-parse", @"--abbrev-ref", @"HEAD"]] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (br.length && ![br containsString:@"fatal"]) self.branch = br;
+    NSString *diff = [self gitRun:@[@"-C", dir, @"diff", @"-U0", @"HEAD", @"--", self.cur.path]];
+    for (NSString *ln in [diff componentsSeparatedByString:@"\n"]) {
+        if (![ln hasPrefix:@"@@"]) continue;
+        NSScanner *sc = [NSScanner scannerWithString:ln]; sc.charactersToBeSkipped = nil;
+        [sc scanString:@"@@ -" intoString:nil]; int a=0,b=1; [sc scanInt:&a]; if ([sc scanString:@"," intoString:nil]) [sc scanInt:&b];
+        [sc scanString:@" +" intoString:nil]; int c=0,dd=1; [sc scanInt:&c]; if ([sc scanString:@"," intoString:nil]) [sc scanInt:&dd];
+        if (dd == 0) { self.gitLines[@(c)] = @"d"; continue; }
+        NSString *type = (b == 0) ? @"a" : @"m";
+        for (int i = 0; i < dd; i++) self.gitLines[@(c+i)] = type;
+    }
+    [self.ruler setNeedsDisplay:YES]; [self updateStatus];
+}
 - (void)openHelp:(id)s   { [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"https://krypton-lang.org/kcode.html"]]; }
 - (void)openGitHub:(id)s { [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"https://github.com/t3m3d/kcode"]]; }
 // --- font zoom / view ---
@@ -1289,7 +1326,7 @@ int main(int argc, const char *argv[]) {
         // line-number ruler
         scroll.hasVerticalRuler = YES; scroll.rulersVisible = YES;
         LineRuler *ruler = [[LineRuler alloc] initWithScrollView:scroll orientation:NSVerticalRuler];
-        ruler.tv = tv; ruler.ruleThickness = 44;
+        ruler.tv = tv; ruler.ruleThickness = 48; gEd.ruler = ruler;
         scroll.verticalRulerView = ruler;
         [[NSNotificationCenter defaultCenter] addObserverForName:NSTextViewDidChangeSelectionNotification object:tv queue:nil usingBlock:^(NSNotification *_n){ [ruler setNeedsDisplay:YES]; [gEd updateStatus]; [gEd highlightBrackets]; }];
         [[NSNotificationCenter defaultCenter] addObserverForName:NSViewBoundsDidChangeNotification object:scroll.contentView queue:nil usingBlock:^(NSNotification *_n){ [ruler setNeedsDisplay:YES]; }];
