@@ -113,10 +113,11 @@ static void highlight(NSTextStorage *ts) {
 @end
 
 // ── Editor controller ──────────────────────────────────────────────────────
-@interface Editor : NSObject <NSTextStorageDelegate, NSWindowDelegate>
+@interface Editor : NSObject <NSTextStorageDelegate, NSWindowDelegate, NSToolbarDelegate>
 @property (strong) NSWindow *win;
 @property (strong) NSTextView *tv;
 @property (strong) NSString *path;     // nil = untitled
+@property (strong) NSTextField *status;
 @end
 
 @implementation Editor
@@ -179,12 +180,55 @@ static void highlight(NSTextStorage *ts) {
     [self showOutput:[NSString stringWithFormat:@"$ kcc --native %@\n%@%@", self.path.lastPathComponent,
         log.length ? log : @"", t.terminationStatus == 0 ? @"\n✓ build ok" : [NSString stringWithFormat:@"\n✗ exit %d", t.terminationStatus]]];
 }
+- (void)run:(id)s {
+    [self build:s];
+    if (!self.path) return;
+    NSString *base = self.path.lastPathComponent.stringByDeletingPathExtension;
+    NSString *bin = [@"/tmp/" stringByAppendingString:base];
+    if (![[NSFileManager defaultManager] isExecutableFileAtPath:bin]) return;  // build failed
+    // run it in Terminal so interactive programs work
+    NSString *cmd = [NSString stringWithFormat:@"tell application \"Terminal\" to do script \"%@\"\ntell application \"Terminal\" to activate",
+                     [bin stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""]];
+    NSAppleScript *as = [[NSAppleScript alloc] initWithSource:cmd];
+    [as executeAndReturnError:nil];
+}
 - (void)showOutput:(NSString *)txt {
     NSAlert *a = [[NSAlert alloc] init];
     a.messageText = @"Build";
     a.informativeText = txt.length > 1500 ? [txt substringToIndex:1500] : txt;
     [a addButtonWithTitle:@"OK"];
     [a beginSheetModalForWindow:self.win completionHandler:nil];
+}
+
+// status bar: Ln/Col + file type
+- (void)updateStatus {
+    NSString *s = self.tv.string; NSUInteger ip = self.tv.selectedRange.location;
+    NSUInteger line = 1, col = 1;
+    for (NSUInteger k = 0; k < ip && k < s.length; k++) { if ([s characterAtIndex:k] == '\n') { line++; col = 1; } else col++; }
+    NSString *ext = self.path ? self.path.pathExtension.uppercaseString : @"";
+    NSString *lang = ext.length ? ext : @"TEXT";
+    self.status.stringValue = [NSString stringWithFormat:@"  Ln %lu, Col %lu      %@      %lu chars",
+                               (unsigned long)line, (unsigned long)col, lang, (unsigned long)s.length];
+}
+
+// --- toolbar ---
+- (NSToolbarItem *)toolbar:(NSToolbar *)tb itemForItemIdentifier:(NSToolbarItemIdentifier)id willBeInsertedIntoToolbar:(BOOL)f {
+    NSToolbarItem *it = [[NSToolbarItem alloc] initWithItemIdentifier:id];
+    it.target = self;
+    NSDictionary *map = @{ @"open":@[@"Open",@"folder",@"openDoc:"], @"save":@[@"Save",@"square.and.arrow.down",@"saveDoc:"],
+                           @"build":@[@"Build",@"hammer",@"build:"], @"run":@[@"Run",@"play.fill",@"run:"] };
+    NSArray *m = map[id]; if (!m) return it;
+    it.label = m[0]; it.paletteLabel = m[0];
+    it.image = [NSImage imageWithSystemSymbolName:m[1] accessibilityDescription:m[0]];
+    it.action = NSSelectorFromString(m[2]);
+    it.toolTip = m[0];
+    return it;
+}
+- (NSArray<NSToolbarItemIdentifier> *)toolbarDefaultItemIdentifiers:(NSToolbar *)tb {
+    return @[@"open", @"save", NSToolbarFlexibleSpaceItemIdentifier, @"build", @"run"];
+}
+- (NSArray<NSToolbarItemIdentifier> *)toolbarAllowedItemIdentifiers:(NSToolbar *)tb {
+    return @[@"open", @"save", @"build", @"run", NSToolbarFlexibleSpaceItemIdentifier, NSToolbarSpaceItemIdentifier];
 }
 
 // --- syntax re-highlight on edit ---
@@ -315,18 +359,39 @@ int main(int argc, const char *argv[]) {
         LineRuler *ruler = [[LineRuler alloc] initWithScrollView:scroll orientation:NSVerticalRuler];
         ruler.tv = tv; ruler.ruleThickness = 44;
         scroll.verticalRulerView = ruler;
-        [[NSNotificationCenter defaultCenter] addObserverForName:NSTextViewDidChangeSelectionNotification object:tv queue:nil usingBlock:^(NSNotification *_n){ [ruler setNeedsDisplay:YES]; }];
+        [[NSNotificationCenter defaultCenter] addObserverForName:NSTextViewDidChangeSelectionNotification object:tv queue:nil usingBlock:^(NSNotification *_n){ [ruler setNeedsDisplay:YES]; [gEd updateStatus]; }];
         [[NSNotificationCenter defaultCenter] addObserverForName:NSViewBoundsDidChangeNotification object:scroll.contentView queue:nil usingBlock:^(NSNotification *_n){ [ruler setNeedsDisplay:YES]; }];
         scroll.contentView.postsBoundsChangedNotifications = YES;
 
-        win.contentView = scroll;
-        gEd.win = win; gEd.tv = tv;
+        // container: scroll view above a status bar
+        NSView *container = [[NSView alloc] initWithFrame:frame];
+        container.autoresizesSubviews = YES;
+        scroll.frame = NSMakeRect(0, 22, frame.size.width, frame.size.height - 22);
+        [container addSubview:scroll];
+        NSTextField *status = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, frame.size.width, 22)];
+        status.editable = NO; status.bezeled = NO; status.selectable = NO;
+        status.drawsBackground = YES;
+        status.backgroundColor = [NSColor colorWithCalibratedRed:0.16 green:0.16 blue:0.19 alpha:1];
+        status.textColor = [NSColor colorWithCalibratedWhite:0.62 alpha:1];
+        status.font = [NSFont monospacedDigitSystemFontOfSize:11 weight:NSFontWeightRegular];
+        status.autoresizingMask = (NSViewWidthSizable | NSViewMaxYMargin);
+        status.stringValue = @"  Ln 1, Col 1";
+        [container addSubview:status];
+        win.contentView = container;
+        gEd.win = win; gEd.tv = tv; gEd.status = status;
+
+        // toolbar — makes it read as a Mac app, not a terminal
+        NSToolbar *tb = [[NSToolbar alloc] initWithIdentifier:@"kcodeToolbar"];
+        tb.delegate = gEd; tb.displayMode = NSToolbarDisplayModeIconOnly; tb.allowsUserCustomization = NO;
+        win.toolbar = tb;
+        if (@available(macOS 11.0, *)) win.toolbarStyle = NSWindowToolbarStyleUnified;
 
         // open a file passed on argv (kcode <file>)
         if (argc > 1) { NSString *p = [NSString stringWithUTF8String:argv[1]];
             if (![p hasPrefix:@"/"]) p = [[[NSFileManager defaultManager] currentDirectoryPath] stringByAppendingPathComponent:p];
             if ([[NSFileManager defaultManager] fileExistsAtPath:p]) [gEd loadPath:p]; }
         [gEd applyTitle];
+        [gEd updateStatus];
 
         [win center]; [win makeKeyAndOrderFront:nil]; [win makeFirstResponder:tv];
         [NSApp activateIgnoringOtherApps:YES];
