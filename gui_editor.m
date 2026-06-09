@@ -385,9 +385,10 @@ static void highlight(NSTextStorage *ts) {
 @property (strong) NSSearchField *qpField;
 @property (strong) NSArray<NSString *> *qpAll;       // all project file paths
 @property (strong) NSArray<NSString *> *qpHits;      // filtered display strings
-@property (assign) NSInteger qpMode;                 // 0 = files, 1 = commands
+@property (assign) NSInteger qpMode;                 // 0 = files, 1 = commands, 2 = find-in-files
 @property (strong) NSArray *cmdLabels, *cmdSels;     // command palette
 @property (strong) NSArray *cmdHitSels;              // selectors parallel to qpHits in cmd mode
+@property (strong) NSMutableArray *fifPaths, *fifLines;  // find-in-files result locations
 @property (strong) NSTextField *sbHeader;
 @end
 
@@ -619,6 +620,7 @@ static BOOL fuzzy(NSString *hay, NSString *needle) {
     return ni == nn;
 }
 - (void)qpFilter:(NSString *)q {
+    if (self.qpMode == 2) return;   // find-in-files results come from grep, not type-filter
     NSArray *src = (self.qpMode == 1) ? self.cmdLabels : self.qpAll;
     NSArray *sels = (self.qpMode == 1) ? self.cmdSels : nil;
     NSString *lq = q.lowercaseString;
@@ -671,6 +673,50 @@ static BOOL fuzzy(NSString *hay, NSString *needle) {
     [self.qpPanel makeFirstResponder:self.qpField];
 }
 - (void)newWindowCmd:(id)s { /* single-window for now */ [self newDoc:s]; }
+- (void)findInFiles:(id)s {
+    if (!self.root) { [self openFolder:s]; if (!self.root) return; }
+    if (!self.qpPanel) [self buildQuickOpen];
+    self.qpMode = 2; self.qpField.placeholderString = @"Search in files…  (Enter)";
+    self.qpField.stringValue = @""; self.qpHits = @[];
+    self.fifPaths = [NSMutableArray array]; self.fifLines = [NSMutableArray array];
+    [self.qpTable reloadData];
+    [self.win beginSheet:self.qpPanel completionHandler:nil];
+    [self.qpPanel makeFirstResponder:self.qpField];
+}
+- (void)fifRun {
+    NSString *q = self.qpField.stringValue; if (q.length == 0) return;
+    NSTask *t = [NSTask new]; t.executableURL = [NSURL fileURLWithPath:@"/usr/bin/grep"];
+    t.arguments = @[@"-rnI", @"--exclude-dir=.git", @"--exclude-dir=node_modules", @"--exclude-dir=dist", @"-e", q, self.root.path];
+    NSPipe *pipe = [NSPipe pipe]; t.standardOutput = pipe; t.standardError = [NSPipe pipe];
+    if (![t launchAndReturnError:nil]) return;
+    NSData *d = [pipe.fileHandleForReading readDataToEndOfFile]; [t waitUntilExit];
+    NSString *out = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] ?: @"";
+    NSMutableArray *hits = [NSMutableArray array], *paths = [NSMutableArray array], *lines = [NSMutableArray array];
+    NSUInteger rootLen = self.root.path.length + 1;
+    for (NSString *ln in [out componentsSeparatedByString:@"\n"]) {
+        if (ln.length == 0) continue;
+        NSRange c1 = [ln rangeOfString:@":"]; if (c1.location == NSNotFound) continue;
+        NSRange c2 = [ln rangeOfString:@":" options:0 range:NSMakeRange(NSMaxRange(c1), ln.length-NSMaxRange(c1))]; if (c2.location == NSNotFound) continue;
+        NSString *path = [ln substringToIndex:c1.location];
+        NSString *lno = [ln substringWithRange:NSMakeRange(NSMaxRange(c1), c2.location-NSMaxRange(c1))];
+        NSString *txt = [[ln substringFromIndex:NSMaxRange(c2)] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        NSString *rel = path.length > rootLen ? [path substringFromIndex:rootLen] : path;
+        [hits addObject:[NSString stringWithFormat:@"%@:%@   %@", rel, lno, txt.length>90?[txt substringToIndex:90]:txt]];
+        [paths addObject:path]; [lines addObject:@(lno.intValue)];
+        if (hits.count >= 500) break;
+    }
+    self.qpHits = hits; self.fifPaths = paths; self.fifLines = lines;
+    [self.qpTable reloadData];
+    if (hits.count) [self.qpTable selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+}
+- (void)gotoLineNumber:(int)ln {
+    NSString *full = self.tv.string; NSUInteger pos = 0; int cur = 1;
+    while (cur < ln && pos < full.length) { if ([full characterAtIndex:pos] == '\n') cur++; pos++; }
+    NSRange lr = [full lineRangeForRange:NSMakeRange(MIN(pos, full.length), 0)];
+    self.tv.selectedRange = NSMakeRange(lr.location, 0);
+    [self.tv scrollRangeToVisible:self.tv.selectedRange];
+    [self.win makeFirstResponder:self.tv];
+}
 - (void)qpOpenSelected {
     NSInteger r = self.qpTable.selectedRow;
     [self.win endSheet:self.qpPanel];
@@ -678,13 +724,15 @@ static BOOL fuzzy(NSString *hay, NSString *needle) {
     if (self.qpMode == 1) {
         SEL sel = NSSelectorFromString(self.cmdHitSels[r]);
         if ([self respondsToSelector:sel]) { IMP imp = [self methodForSelector:sel]; void (*fn)(id, SEL, id) = (void *)imp; fn(self, sel, nil); }
+    } else if (self.qpMode == 2) {
+        if (r < (NSInteger)self.fifPaths.count) { [self loadPath:self.fifPaths[r]]; [self gotoLineNumber:[self.fifLines[r] intValue]]; }
     } else [self loadPath:[self.root.path stringByAppendingPathComponent:self.qpHits[r]]];
 }
 - (void)controlTextDidChange:(NSNotification *)n { if (n.object == self.qpField) [self qpFilter:self.qpField.stringValue]; }
 - (BOOL)control:(NSControl *)c textView:(NSTextView *)tv doCommandBySelector:(SEL)sel {
     if (c != self.qpField) return NO;
     NSInteger r = self.qpTable.selectedRow, n = self.qpHits.count;
-    if (sel == @selector(insertNewline:)) { [self qpOpenSelected]; return YES; }
+    if (sel == @selector(insertNewline:)) { if (self.qpMode == 2) [self fifRun]; else [self qpOpenSelected]; return YES; }
     if (sel == @selector(cancelOperation:)) { [self.win endSheet:self.qpPanel]; return YES; }
     if (sel == @selector(moveDown:)) { if (r+1 < n) [self.qpTable selectRowIndexes:[NSIndexSet indexSetWithIndex:r+1] byExtendingSelection:NO]; [self.qpTable scrollRowToVisible:self.qpTable.selectedRow]; return YES; }
     if (sel == @selector(moveUp:))   { if (r > 0) [self.qpTable selectRowIndexes:[NSIndexSet indexSetWithIndex:r-1] byExtendingSelection:NO]; [self.qpTable scrollRowToVisible:self.qpTable.selectedRow]; return YES; }
@@ -826,6 +874,7 @@ static void buildMenu(void) {
     NSMenu *nav = [[NSMenu alloc] initWithTitle:@"Navigate"];
     mi(nav, @"Command Palette…", @selector(commandPalette:), @"p", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
     mi(nav, @"Quick Open…", @selector(quickOpen:), @"p", gEd);
+    mi(nav, @"Find in Files…", @selector(findInFiles:), @"f", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
     mi(nav, @"Go to Line…", @selector(goToLine:), @"l", gEd);
     [nav addItem:[NSMenuItem separatorItem]];
     mi(nav, @"Next Tab", @selector(nextTab:), @"]", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
