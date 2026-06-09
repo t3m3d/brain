@@ -113,11 +113,44 @@ static void highlight(NSTextStorage *ts) {
 @end
 
 // ── Editor controller ──────────────────────────────────────────────────────
-@interface Editor : NSObject <NSTextStorageDelegate, NSWindowDelegate, NSToolbarDelegate>
+// ── file-tree model (lazy) ──────────────────────────────────────────────────
+@interface FileNode : NSObject
+@property (strong) NSString *path;
+@property (strong) NSString *name;
+@property (assign) BOOL isDir;
+@property (strong) NSMutableArray<FileNode *> *kids;
+@property (assign) BOOL loaded;
+@end
+@implementation FileNode
++ (FileNode *)nodeWithPath:(NSString *)p {
+    FileNode *n = [FileNode new]; n.path = p; n.name = p.lastPathComponent;
+    BOOL d = NO; [[NSFileManager defaultManager] fileExistsAtPath:p isDirectory:&d]; n.isDir = d;
+    return n;
+}
+- (NSMutableArray<FileNode *> *)children {
+    if (self.loaded) return self.kids;
+    self.loaded = YES; self.kids = [NSMutableArray array];
+    if (!self.isDir) return self.kids;
+    NSArray *items = [[[NSFileManager defaultManager] contentsOfDirectoryAtPath:self.path error:nil]
+        sortedArrayUsingComparator:^(NSString *a, NSString *b){ return [a caseInsensitiveCompare:b]; }];
+    NSMutableArray *dirs = [NSMutableArray array], *files = [NSMutableArray array];
+    for (NSString *it in items) {
+        if ([it isEqualToString:@".DS_Store"] || [it isEqualToString:@".git"]) continue;
+        FileNode *c = [FileNode nodeWithPath:[self.path stringByAppendingPathComponent:it]];
+        if (c.isDir) [dirs addObject:c]; else [files addObject:c];
+    }
+    [self.kids addObjectsFromArray:dirs]; [self.kids addObjectsFromArray:files];
+    return self.kids;
+}
+@end
+
+@interface Editor : NSObject <NSTextStorageDelegate, NSWindowDelegate, NSToolbarDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate>
 @property (strong) NSWindow *win;
 @property (strong) NSTextView *tv;
 @property (strong) NSString *path;     // nil = untitled
 @property (strong) NSTextField *status;
+@property (strong) FileNode *root;
+@property (strong) NSOutlineView *outline;
 @end
 
 @implementation Editor
@@ -138,6 +171,8 @@ static void highlight(NSTextStorage *ts) {
     self.path = p;
     self.win.documentEdited = NO;
     [self applyTitle];
+    [self updateStatus];
+    if (!self.root && self.outline) [self setFolder:[p stringByDeletingLastPathComponent]];
     [self.win.contentView setNeedsDisplay:YES];
 }
 
@@ -211,6 +246,44 @@ static void highlight(NSTextStorage *ts) {
                                (unsigned long)line, (unsigned long)col, lang, (unsigned long)s.length];
 }
 
+// --- file-tree sidebar ---
+- (void)openFolder:(id)s {
+    NSOpenPanel *o = [NSOpenPanel openPanel]; o.canChooseDirectories = YES; o.canChooseFiles = NO; o.allowsMultipleSelection = NO;
+    if ([o runModal] == NSModalResponseOK && o.URLs.count) [self setFolder:o.URLs[0].path];
+}
+- (void)setFolder:(NSString *)dir {
+    self.root = [FileNode nodeWithPath:dir];
+    [self.outline reloadData];
+}
+- (NSInteger)outlineView:(NSOutlineView *)ov numberOfChildrenOfItem:(id)item {
+    FileNode *n = item ?: self.root; return n ? n.children.count : 0;
+}
+- (id)outlineView:(NSOutlineView *)ov child:(NSInteger)i ofItem:(id)item {
+    FileNode *n = item ?: self.root; return n.children[i];
+}
+- (BOOL)outlineView:(NSOutlineView *)ov isItemExpandable:(id)item { return ((FileNode *)item).isDir; }
+- (NSView *)outlineView:(NSOutlineView *)ov viewForTableColumn:(NSTableColumn *)c item:(id)item {
+    FileNode *n = item;
+    NSTableCellView *cell = [ov makeViewWithIdentifier:@"cell" owner:self];
+    if (!cell) {
+        cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0,0,200,20)]; cell.identifier = @"cell";
+        NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect(2,2,16,16)];
+        NSTextField *tf = [[NSTextField alloc] initWithFrame:NSMakeRect(22,1,172,18)];
+        tf.bezeled = NO; tf.editable = NO; tf.drawsBackground = NO; tf.font = [NSFont systemFontOfSize:12];
+        tf.textColor = [NSColor colorWithCalibratedWhite:0.86 alpha:1];
+        [cell addSubview:iv]; [cell addSubview:tf]; cell.imageView = iv; cell.textField = tf;
+    }
+    cell.textField.stringValue = n.name;
+    NSImage *ic = [[NSWorkspace sharedWorkspace] iconForFile:n.path]; ic.size = NSMakeSize(16,16);
+    cell.imageView.image = ic;
+    return cell;
+}
+- (void)outlineViewSelectionDidChange:(NSNotification *)note {
+    NSInteger r = self.outline.selectedRow; if (r < 0) return;
+    FileNode *n = [self.outline itemAtRow:r];
+    if (n && !n.isDir) [self loadPath:n.path];
+}
+
 // --- toolbar ---
 - (NSToolbarItem *)toolbar:(NSToolbar *)tb itemForItemIdentifier:(NSToolbarItemIdentifier)id willBeInsertedIntoToolbar:(BOOL)f {
     NSToolbarItem *it = [[NSToolbarItem alloc] initWithItemIdentifier:id];
@@ -269,6 +342,7 @@ static void buildMenu(void) {
     NSMenu *f = [[NSMenu alloc] initWithTitle:@"File"];
     mi(f, @"New", @selector(newDoc:), @"n", gEd);
     mi(f, @"Open…", @selector(openDoc:), @"o", gEd);
+    mi(f, @"Open Folder…", @selector(openFolder:), @"O", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
     [f addItem:[NSMenuItem separatorItem]];
     mi(f, @"Save", @selector(saveDoc:), @"s", gEd);
     mi(f, @"Save As…", @selector(saveAs:), @"S", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
@@ -363,11 +437,31 @@ int main(int argc, const char *argv[]) {
         [[NSNotificationCenter defaultCenter] addObserverForName:NSViewBoundsDidChangeNotification object:scroll.contentView queue:nil usingBlock:^(NSNotification *_n){ [ruler setNeedsDisplay:YES]; }];
         scroll.contentView.postsBoundsChangedNotifications = YES;
 
-        // container: scroll view above a status bar
+        // file-tree sidebar (NSOutlineView)
+        NSColor *sideBg = [NSColor colorWithCalibratedRed:0.145 green:0.145 blue:0.165 alpha:1];
+        NSScrollView *sideScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,210,frame.size.height-22)];
+        sideScroll.hasVerticalScroller = YES; sideScroll.drawsBackground = YES; sideScroll.backgroundColor = sideBg;
+        sideScroll.borderType = NSNoBorder;
+        NSOutlineView *outline = [[NSOutlineView alloc] initWithFrame:sideScroll.bounds];
+        NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"name"]; col.width = 196;
+        [outline addTableColumn:col]; outline.outlineTableColumn = col;
+        outline.headerView = nil; outline.dataSource = gEd; outline.delegate = gEd;
+        outline.backgroundColor = sideBg; outline.indentationPerLevel = 13;
+        outline.rowSizeStyle = NSTableViewRowSizeStyleMedium;
+        outline.focusRingType = NSFocusRingTypeNone;
+        sideScroll.documentView = outline;
+        gEd.outline = outline;
+
+        // split: sidebar | editor
+        NSSplitView *split = [[NSSplitView alloc] initWithFrame:NSMakeRect(0, 22, frame.size.width, frame.size.height - 22)];
+        split.vertical = YES; split.dividerStyle = NSSplitViewDividerStyleThin;
+        split.autoresizingMask = (NSViewWidthSizable | NSViewHeightSizable);
+        [split addSubview:sideScroll]; [split addSubview:scroll];
+        [split adjustSubviews]; [split setPosition:210 ofDividerAtIndex:0];
+
         NSView *container = [[NSView alloc] initWithFrame:frame];
         container.autoresizesSubviews = YES;
-        scroll.frame = NSMakeRect(0, 22, frame.size.width, frame.size.height - 22);
-        [container addSubview:scroll];
+        [container addSubview:split];
         NSTextField *status = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, frame.size.width, 22)];
         status.editable = NO; status.bezeled = NO; status.selectable = NO;
         status.drawsBackground = YES;
@@ -386,10 +480,14 @@ int main(int argc, const char *argv[]) {
         win.toolbar = tb;
         if (@available(macOS 11.0, *)) win.toolbarStyle = NSWindowToolbarStyleUnified;
 
-        // open a file passed on argv (kcode <file>)
+        // open a file OR folder passed on argv (kcode <path>)
         if (argc > 1) { NSString *p = [NSString stringWithUTF8String:argv[1]];
             if (![p hasPrefix:@"/"]) p = [[[NSFileManager defaultManager] currentDirectoryPath] stringByAppendingPathComponent:p];
-            if ([[NSFileManager defaultManager] fileExistsAtPath:p]) [gEd loadPath:p]; }
+            BOOL d = NO;
+            if ([[NSFileManager defaultManager] fileExistsAtPath:p isDirectory:&d]) {
+                if (d) [gEd setFolder:p]; else [gEd loadPath:p];
+            }
+        }
         [gEd applyTitle];
         [gEd updateStatus];
 
