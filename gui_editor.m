@@ -444,6 +444,24 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
         self.selectedRange = NSMakeRange(c, 0);
     }
 }
+- (void)keyDown:(NSEvent *)e {
+    if ((e.modifierFlags & NSEventModifierFlagControl) && e.keyCode == 49) { [self complete:nil]; return; }   // ⌃Space autocomplete
+    [super keyDown:e];
+}
+- (NSArray<NSString *> *)completionsForPartialWordRange:(NSRange)r indexOfSelectedItem:(NSInteger *)idx {
+    NSString *s = self.string; if (r.location == NSNotFound || r.length == 0) return nil;
+    NSString *pre = [s substringWithRange:r], *lpre = pre.lowercaseString;
+    NSMutableSet *seen = [NSMutableSet set]; NSUInteger n = s.length, i = 0;
+    while (i < n) { unichar c = [s characterAtIndex:i];
+        if (isIdentStart(c)) { NSUInteger j = i+1; while (j < n && isIdentChar([s characterAtIndex:j])) j++;
+            NSString *w = [s substringWithRange:NSMakeRange(i, j-i)];
+            if (w.length > pre.length && [w.lowercaseString hasPrefix:lpre]) [seen addObject:w];
+            i = j; } else i++;
+    }
+    NSArray *out = [seen.allObjects sortedArrayUsingSelector:@selector(caseInsensitiveCompare:)];
+    if (idx) *idx = -1;
+    return out.count > 60 ? [out subarrayWithRange:NSMakeRange(0,60)] : out;
+}
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)s {
     if ([[s draggingPasteboard].types containsObject:NSPasteboardTypeFileURL]) return NSDragOperationCopy;
     return [super draggingEntered:s];
@@ -640,7 +658,27 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
     self.root = [FileNode nodeWithPath:dir];
     [self.outline reloadData];
     self.sbHeader.stringValue = [@"  " stringByAppendingString:dir.lastPathComponent.uppercaseString];
-    [[NSUserDefaults standardUserDefaults] setObject:dir forKey:@"kcodeLastFolder"];
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    [ud setObject:dir forKey:@"kcodeLastFolder"];
+    NSMutableArray *rec = [[ud arrayForKey:@"kcodeRecent"] mutableCopy] ?: [NSMutableArray array];
+    [rec removeObject:dir]; [rec insertObject:dir atIndex:0]; while (rec.count > 8) [rec removeLastObject];
+    [ud setObject:rec forKey:@"kcodeRecent"];
+}
+- (void)openRecentFolder:(NSMenuItem *)m {
+    NSString *p = m.representedObject; if (p && [[NSFileManager defaultManager] fileExistsAtPath:p]) [self setFolder:p];
+}
+- (void)revealActive:(id)s {
+    if (!self.cur.path || !self.root || ![self.cur.path hasPrefix:self.root.path]) return;
+    NSString *rel = [self.cur.path substringFromIndex:self.root.path.length];
+    if ([rel hasPrefix:@"/"]) rel = [rel substringFromIndex:1];
+    FileNode *node = self.root; NSString *acc = self.root.path;
+    for (NSString *comp in [rel componentsSeparatedByString:@"/"]) {
+        FileNode *child = nil; for (FileNode *c in node.children) if ([c.name isEqualToString:comp]) { child = c; break; }
+        if (!child) break;
+        if (child.isDir) [self.outline expandItem:child];
+        node = child; acc = [acc stringByAppendingPathComponent:comp];
+        if ([acc isEqualToString:self.cur.path]) { NSInteger row = [self.outline rowForItem:child]; if (row >= 0) { [self.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO]; [self.outline scrollRowToVisible:row]; } }
+    }
 }
 - (void)installExtension:(id)s {
     NSOpenPanel *o = [NSOpenPanel openPanel]; o.allowedFileTypes = @[@"vsix"]; o.canChooseDirectories = NO;
@@ -1078,6 +1116,13 @@ static void buildMenu(void) {
     mi(f, @"New", @selector(newDoc:), @"n", gEd);
     mi(f, @"Open…", @selector(openDoc:), @"o", gEd);
     mi(f, @"Open Folder…", @selector(openFolder:), @"O", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
+    NSMenuItem *recItem = [f addItemWithTitle:@"Open Recent" action:NULL keyEquivalent:@""];
+    NSMenu *recMenu = [[NSMenu alloc] initWithTitle:@"Open Recent"];
+    for (NSString *rp in [[NSUserDefaults standardUserDefaults] arrayForKey:@"kcodeRecent"]) {
+        NSMenuItem *it = [recMenu addItemWithTitle:rp.lastPathComponent action:@selector(openRecentFolder:) keyEquivalent:@""];
+        it.target = gEd; it.representedObject = rp; it.toolTip = rp;
+    }
+    [recItem setSubmenu:recMenu];
     [f addItem:[NSMenuItem separatorItem]];
     mi(f, @"Install Extension…", @selector(installExtension:), @"", gEd);
     [f addItem:[NSMenuItem separatorItem]];
@@ -1122,6 +1167,7 @@ static void buildMenu(void) {
     mi(nav, @"Quick Open…", @selector(quickOpen:), @"p", gEd);
     mi(nav, @"Find in Files…", @selector(findInFiles:), @"f", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
     mi(nav, @"Go to Line…", @selector(goToLine:), @"l", gEd);
+    mi(nav, @"Reveal Active File", @selector(revealActive:), @"", gEd);
     [nav addItem:[NSMenuItem separatorItem]];
     mi(nav, @"Next Tab", @selector(nextTab:), @"]", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
     mi(nav, @"Previous Tab", @selector(prevTab:), @"[", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
