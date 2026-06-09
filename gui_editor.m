@@ -735,6 +735,8 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
     [self reloadDir:[n.path stringByDeletingLastPathComponent]];
 }
 - (void)treeReveal:(id)s { FileNode *n = [self clickedNode]; if (n) [[NSWorkspace sharedWorkspace] selectFile:n.path inFileViewerRootedAtPath:@""]; }
+- (void)openHelp:(id)s   { [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"https://krypton-lang.org/kcode.html"]]; }
+- (void)openGitHub:(id)s { [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"https://github.com/t3m3d/kcode"]]; }
 // --- font zoom / view ---
 - (void)reflow { self.tv.font = gFont; for (KDoc *d in self.docs) { if (d == self.cur) highlight(d.storage); } [self.tv setNeedsDisplay:YES]; }
 - (void)zoomIn:(id)s     { CGFloat sz = gFont.pointSize + 1; gFont = [NSFont fontWithName:gFont.fontName size:sz] ?: gFont; [self reflow]; }
@@ -786,6 +788,25 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
     [ts addAttribute:NSBackgroundColorAttributeName value:hl range:NSMakeRange(pos, 1)];
     if (i >= 0 && i < (NSInteger)n && !depth) [ts addAttribute:NSBackgroundColorAttributeName value:hl range:NSMakeRange(i, 1)];
 }
+- (void)applyDark:(BOOL)dark {
+    if (dark) {
+        gBg=[NSColor colorWithCalibratedRed:0.12 green:0.12 blue:0.14 alpha:1]; gFg=[NSColor colorWithCalibratedRed:0.85 green:0.86 blue:0.84 alpha:1];
+        gKw=[NSColor colorWithCalibratedRed:0.78 green:0.47 blue:0.87 alpha:1]; gBuiltin=[NSColor colorWithCalibratedRed:0.36 green:0.71 blue:0.93 alpha:1];
+        gStr=[NSColor colorWithCalibratedRed:0.60 green:0.80 blue:0.42 alpha:1]; gCm=[NSColor colorWithCalibratedRed:0.45 green:0.47 blue:0.50 alpha:1];
+        gNum=[NSColor colorWithCalibratedRed:0.90 green:0.62 blue:0.36 alpha:1]; gType=[NSColor colorWithCalibratedRed:0.40 green:0.78 blue:0.74 alpha:1];
+        self.win.appearance=[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+    } else {
+        gBg=[NSColor colorWithCalibratedWhite:0.99 alpha:1]; gFg=[NSColor colorWithCalibratedRed:0.13 green:0.13 blue:0.15 alpha:1];
+        gKw=[NSColor colorWithCalibratedRed:0.52 green:0.12 blue:0.70 alpha:1]; gBuiltin=[NSColor colorWithCalibratedRed:0.10 green:0.36 blue:0.74 alpha:1];
+        gStr=[NSColor colorWithCalibratedRed:0.10 green:0.48 blue:0.16 alpha:1]; gCm=[NSColor colorWithCalibratedRed:0.52 green:0.54 blue:0.56 alpha:1];
+        gNum=[NSColor colorWithCalibratedRed:0.62 green:0.34 blue:0.08 alpha:1]; gType=[NSColor colorWithCalibratedRed:0.10 green:0.48 blue:0.54 alpha:1];
+        self.win.appearance=[NSAppearance appearanceNamed:NSAppearanceNameAqua];
+    }
+    self.tv.backgroundColor=gBg; self.tv.insertionPointColor=gFg;
+    highlight(self.cur.storage); [self.tv setNeedsDisplay:YES];
+    [[NSUserDefaults standardUserDefaults] setBool:!dark forKey:@"kcodeLight"];
+}
+- (void)toggleTheme:(id)s { [self applyDark:[[NSUserDefaults standardUserDefaults] boolForKey:@"kcodeLight"]]; }
 - (void)toggleSidebar:(id)s {
     NSSplitView *sp = self.hsplit; if (!sp) return;
     BOOL collapsed = [sp isSubviewCollapsed:sp.subviews[0]] || NSWidth([sp.subviews[0] frame]) < 2;
@@ -1090,6 +1111,7 @@ static void buildMenu(void) {
     mi(v, @"Default Size", @selector(zoomReset:), @"0", gEd);
     mi(v, @"Smaller", @selector(zoomOut:), @"-", gEd);
     [v addItem:[NSMenuItem separatorItem]];
+    mi(v, @"Toggle Light / Dark", @selector(toggleTheme:), @"", gEd);
     mi(v, @"Toggle Sidebar", @selector(toggleSidebar:), @"\\", gEd);
     mi(v, @"Toggle Terminal", @selector(toggleTerminal:), @"`", gEd).keyEquivalentModifierMask = NSEventModifierFlagControl;
     vI.submenu = v;
@@ -1112,7 +1134,9 @@ static void buildMenu(void) {
     wI.submenu = w;
     NSMenuItem *hI = [[NSMenuItem alloc] init]; [main addItem:hI];
     NSMenu *h = [[NSMenu alloc] initWithTitle:@"Help"];
-    [h addItemWithTitle:@"kcode Help" action:NULL keyEquivalent:@""];
+    mi(h, @"kcode Help", @selector(openHelp:), @"?", gEd);
+    [h addItem:[NSMenuItem separatorItem]];
+    mi(h, @"kcode on GitHub", @selector(openGitHub:), @"", gEd);
     hI.submenu = h;
     [NSApp setMainMenu:main];
     [NSApp setWindowsMenu:w];
@@ -1318,6 +1342,7 @@ int main(int argc, const char *argv[]) {
         if (gEd.docs.count == 0) [gEd newDoc:nil];     // always one open document
         [gEd applyTitle];
         [gEd updateStatus];
+        if ([[NSUserDefaults standardUserDefaults] boolForKey:@"kcodeLight"]) [gEd applyDark:NO];   // restore theme
 
         [win setFrameAutosaveName:@"kcodeMain"];   // remember size + position
         if (NSEqualRects(win.frame, NSMakeRect(0,0,820,560)) || !win.frameAutosaveName) [win center];
