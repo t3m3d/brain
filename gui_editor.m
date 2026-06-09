@@ -404,9 +404,9 @@ static void highlight(NSTextStorage *ts) {
     return g;
 }
 // switch the visible document (swap the text view's storage; per-doc undo/selection/grammar)
-- (void)setCur:(KDoc *)d {
+- (void)showDoc:(KDoc *)d {
     if (self.cur && self.cur != d) self.cur.sel = self.tv.selectedRange;
-    self.cur = d;
+    _cur = d;
     [self.tv.layoutManager replaceTextStorage:d.storage];
     d.storage.delegate = self;
     self.tv.selectedRange = NSMakeRange(MIN(d.sel.location, d.storage.length), 0);
@@ -418,40 +418,40 @@ static void highlight(NSTextStorage *ts) {
     [self.win makeFirstResponder:self.tv];
 }
 - (void)loadPath:(NSString *)p {
-    for (KDoc *d in self.docs) if (d.path && [d.path isEqualToString:p]) { [self setCur:d]; return; }
+    for (KDoc *d in self.docs) if (d.path && [d.path isEqualToString:p]) { [self showDoc:d]; return; }
     NSString *txt = [NSString stringWithContentsOfFile:p encoding:NSUTF8StringEncoding error:nil] ?: @"";
     KDoc *d = [KDoc new];
     d.storage = [[NSTextStorage alloc] initWithString:txt];
     d.path = p; d.sel = NSMakeRange(0,0); d.undo = [NSUndoManager new]; d.grammar = [self grammarForPath:p];
     [self.docs addObject:d];
     if (!self.root && self.outline) [self setFolder:[p stringByDeletingLastPathComponent]];
-    [self setCur:d];
+    [self showDoc:d];
 }
-- (void)selectDocAt:(NSInteger)i { if (i >= 0 && i < (NSInteger)self.docs.count) [self setCur:self.docs[i]]; }
+- (void)selectDocAt:(NSInteger)i { if (i >= 0 && i < (NSInteger)self.docs.count) [self showDoc:self.docs[i]]; }
 - (void)nextTab:(id)s { if (self.docs.count < 2) return; NSInteger i = [self.docs indexOfObject:self.cur]; [self selectDocAt:(i+1) % self.docs.count]; }
 - (void)prevTab:(id)s { if (self.docs.count < 2) return; NSInteger i = [self.docs indexOfObject:self.cur]; [self selectDocAt:(i - 1 + self.docs.count) % self.docs.count]; }
 - (void)closeDocAt:(NSInteger)i {
     if (i < 0 || i >= (NSInteger)self.docs.count) return;
     KDoc *d = self.docs[i];
     if (d.dirty) {
-        KDoc *was = self.cur; [self setCur:d];
+        KDoc *was = self.cur; [self showDoc:d];
         NSAlert *a = [[NSAlert alloc] init]; a.messageText = [NSString stringWithFormat:@"Save %@?", d.title];
         [a addButtonWithTitle:@"Save"]; [a addButtonWithTitle:@"Discard"]; [a addButtonWithTitle:@"Cancel"];
         NSModalResponse r = [a runModal];
-        if (r == NSAlertFirstButtonReturn) { [self saveDoc:nil]; if (d.dirty) { if (was && [self.docs containsObject:was]) [self setCur:was]; return; } }
-        else if (r == NSAlertThirdButtonReturn) { if (was && [self.docs containsObject:was]) [self setCur:was]; return; }
+        if (r == NSAlertFirstButtonReturn) { [self saveDoc:nil]; if (d.dirty) { if (was && [self.docs containsObject:was]) [self showDoc:was]; return; } }
+        else if (r == NSAlertThirdButtonReturn) { if (was && [self.docs containsObject:was]) [self showDoc:was]; return; }
     }
     BOOL wasCur = (d == self.cur);
     [self.docs removeObjectAtIndex:i];
     if (self.docs.count == 0) { [self newDoc:nil]; return; }
-    if (wasCur) [self setCur:self.docs[MIN(i, (NSInteger)self.docs.count - 1)]];
+    if (wasCur) [self showDoc:self.docs[MIN(i, (NSInteger)self.docs.count - 1)]];
     else [self.tabBar setNeedsDisplay:YES];
 }
 
 // --- menu actions ---
 - (void)newDoc:(id)s {
     KDoc *d = [KDoc new]; d.storage = [[NSTextStorage alloc] initWithString:@""]; d.undo = [NSUndoManager new]; d.sel = NSMakeRange(0,0);
-    [self.docs addObject:d]; [self setCur:d];
+    [self.docs addObject:d]; [self showDoc:d];
 }
 - (void)openDoc:(id)s {
     NSOpenPanel *o = [NSOpenPanel openPanel]; o.allowedFileTypes = nil; o.allowsMultipleSelection = NO;
@@ -707,7 +707,7 @@ static BOOL fuzzy(NSString *hay, NSString *needle) {
     NSModalResponse r = [a runModal];
     if (r == NSAlertSecondButtonReturn) return YES;
     if (r == NSAlertThirdButtonReturn) return NO;
-    for (KDoc *d in [self.docs copy]) if (d.dirty) { [self setCur:d]; [self saveDoc:nil]; }
+    for (KDoc *d in [self.docs copy]) if (d.dirty) { [self showDoc:d]; [self saveDoc:nil]; }
     BOOL still = NO; for (KDoc *d in self.docs) if (d.dirty) still = YES;
     return !still;
 }
