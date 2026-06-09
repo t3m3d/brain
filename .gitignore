@@ -175,6 +175,7 @@ _UpgradeReport_Files/
 **/*.Server/GeneratedArtifacts
 **/*.Server/ModelManifest.xml
 *~
+/kcode
 # .NET Core
 # (https://github.com/github/gitignore/pull/1529#issuecomment-104372622)
 # (https://github.com/github/gitignore/pull/2483#issue-259490424)
@@ -321,6 +322,7 @@ healthchecksdb
 ipch/
 kcode-gui
 kcode.app/
+kcode.icns
 MigrationBackup/
 mono_crash.*
 MSBuild_Logs/
@@ -344,4 +346,3 @@ StyleCopReport.xml
 TestResult.xml
 UpgradeLog*.htm
 UpgradeLog*.XML
-kcode.icns
