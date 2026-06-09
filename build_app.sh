@@ -55,6 +55,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleIconFile</key>        <string>kcode</string>
     <key>NSHighResolutionCapable</key> <true/>
+    <key>NSDocumentsFolderUsageDescription</key> <string>kcode opens and edits files in your Documents folder.</string>
+    <key>NSDesktopFolderUsageDescription</key>   <string>kcode opens and edits files on your Desktop.</string>
+    <key>NSDownloadsFolderUsageDescription</key> <string>kcode opens and edits files in your Downloads folder.</string>
     <key>LSMinimumSystemVersion</key>  <string>13.0</string>
     <key>CFBundleDocumentTypes</key>
     <array>
