@@ -299,6 +299,26 @@ static void highlight(NSTextStorage *ts) {
 }
 @end
 
+// ── open document + tab bar ─────────────────────────────────────────────────
+@class Editor;
+@interface KDoc : NSObject
+@property (strong) NSTextStorage *storage;
+@property (strong) NSString *path;       // nil = untitled
+@property (assign) BOOL dirty;
+@property (assign) NSRange sel;
+@property (strong) NSUndoManager *undo;
+@property (strong) TMGrammar *grammar;
+- (NSString *)title;
+@end
+@implementation KDoc
+- (NSString *)title { return self.path ? self.path.lastPathComponent : @"untitled"; }
+@end
+
+@interface KTabBar : NSView
+@property (weak) Editor *ed;
+@property (strong) NSMutableArray *hit;   // tab frames (NSValue) parallel to docs
+@end
+
 // ── editor view: current-line highlight, auto-pairs, auto-indent ────────────
 @interface KEditView : NSTextView
 @end
@@ -350,10 +370,13 @@ static void highlight(NSTextStorage *ts) {
 }
 @end
 
-@interface Editor : NSObject <NSTextStorageDelegate, NSWindowDelegate, NSToolbarDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate, NSControlTextEditingDelegate, NSTableViewDataSource, NSTableViewDelegate>
+@interface Editor : NSObject <NSTextStorageDelegate, NSWindowDelegate, NSToolbarDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate, NSControlTextEditingDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextViewDelegate>
 @property (strong) NSWindow *win;
 @property (strong) NSTextView *tv;
-@property (strong) NSString *path;     // nil = untitled
+@property (strong) NSString *path;     // nil = untitled (mirrors cur.path)
+@property (strong) NSMutableArray<KDoc *> *docs;
+@property (strong) KDoc *cur;
+@property (strong) KTabBar *tabBar;
 @property (strong) NSTextField *status;
 @property (strong) FileNode *root;
 @property (strong) NSOutlineView *outline;
@@ -368,39 +391,77 @@ static void highlight(NSTextStorage *ts) {
 @implementation Editor
 
 - (void)applyTitle {
-    NSString *name = self.path ? self.path.lastPathComponent : @"Untitled";
-    self.win.title = name;
-    self.win.representedFilename = self.path ?: @"";
-    self.win.documentEdited = self.tv.string.length > 0 && [self isDirty];
+    self.win.title = self.cur.title;
+    self.win.representedFilename = self.cur.path ?: @"";
+    self.win.documentEdited = self.cur.dirty;
 }
-- (BOOL)isDirty { return self.win.documentEdited; }
+- (BOOL)isDirty { return self.cur.dirty; }
 
-- (void)loadPath:(NSString *)p {
-    NSString *txt = [NSString stringWithContentsOfFile:p encoding:NSUTF8StringEncoding error:nil];
-    if (!txt) txt = @"";
-    [self.tv setString:txt];
+- (TMGrammar *)grammarForPath:(NSString *)p {
     NSString *ext = p.pathExtension.lowercaseString;
-    gActiveGrammar = gExtGrammar[ext];                              // VSIX-provided grammar (e.g. Krypton)
-    if (!gActiveGrammar) gActiveGrammar = loadGrammarForLang(gExtLang[ext] ?: gExtLang[p.lastPathComponent.lowercaseString]);
-    highlight(self.tv.textStorage);
-    self.path = p;
-    self.win.documentEdited = NO;
-    [self applyTitle];
-    [self updateStatus];
+    TMGrammar *g = gExtGrammar[ext];
+    if (!g) g = loadGrammarForLang(gExtLang[ext] ?: gExtLang[p.lastPathComponent.lowercaseString]);
+    return g;
+}
+// switch the visible document (swap the text view's storage; per-doc undo/selection/grammar)
+- (void)setCur:(KDoc *)d {
+    if (self.cur && self.cur != d) self.cur.sel = self.tv.selectedRange;
+    self.cur = d;
+    [self.tv.layoutManager replaceTextStorage:d.storage];
+    d.storage.delegate = self;
+    self.tv.selectedRange = NSMakeRange(MIN(d.sel.location, d.storage.length), 0);
+    self.path = d.path;
+    gActiveGrammar = d.grammar;
+    highlight(d.storage);
+    [self.tv scrollRangeToVisible:self.tv.selectedRange];
+    [self applyTitle]; [self updateStatus]; [self.tabBar setNeedsDisplay:YES];
+    [self.win makeFirstResponder:self.tv];
+}
+- (void)loadPath:(NSString *)p {
+    for (KDoc *d in self.docs) if (d.path && [d.path isEqualToString:p]) { [self setCur:d]; return; }
+    NSString *txt = [NSString stringWithContentsOfFile:p encoding:NSUTF8StringEncoding error:nil] ?: @"";
+    KDoc *d = [KDoc new];
+    d.storage = [[NSTextStorage alloc] initWithString:txt];
+    d.path = p; d.sel = NSMakeRange(0,0); d.undo = [NSUndoManager new]; d.grammar = [self grammarForPath:p];
+    [self.docs addObject:d];
     if (!self.root && self.outline) [self setFolder:[p stringByDeletingLastPathComponent]];
-    [self.win.contentView setNeedsDisplay:YES];
+    [self setCur:d];
+}
+- (void)selectDocAt:(NSInteger)i { if (i >= 0 && i < (NSInteger)self.docs.count) [self setCur:self.docs[i]]; }
+- (void)nextTab:(id)s { if (self.docs.count < 2) return; NSInteger i = [self.docs indexOfObject:self.cur]; [self selectDocAt:(i+1) % self.docs.count]; }
+- (void)prevTab:(id)s { if (self.docs.count < 2) return; NSInteger i = [self.docs indexOfObject:self.cur]; [self selectDocAt:(i - 1 + self.docs.count) % self.docs.count]; }
+- (void)closeDocAt:(NSInteger)i {
+    if (i < 0 || i >= (NSInteger)self.docs.count) return;
+    KDoc *d = self.docs[i];
+    if (d.dirty) {
+        KDoc *was = self.cur; [self setCur:d];
+        NSAlert *a = [[NSAlert alloc] init]; a.messageText = [NSString stringWithFormat:@"Save %@?", d.title];
+        [a addButtonWithTitle:@"Save"]; [a addButtonWithTitle:@"Discard"]; [a addButtonWithTitle:@"Cancel"];
+        NSModalResponse r = [a runModal];
+        if (r == NSAlertFirstButtonReturn) { [self saveDoc:nil]; if (d.dirty) { if (was && [self.docs containsObject:was]) [self setCur:was]; return; } }
+        else if (r == NSAlertThirdButtonReturn) { if (was && [self.docs containsObject:was]) [self setCur:was]; return; }
+    }
+    BOOL wasCur = (d == self.cur);
+    [self.docs removeObjectAtIndex:i];
+    if (self.docs.count == 0) { [self newDoc:nil]; return; }
+    if (wasCur) [self setCur:self.docs[MIN(i, (NSInteger)self.docs.count - 1)]];
+    else [self.tabBar setNeedsDisplay:YES];
 }
 
 // --- menu actions ---
-- (void)newDoc:(id)s    { [self.tv setString:@""]; self.path = nil; self.win.documentEdited = NO; [self applyTitle]; }
+- (void)newDoc:(id)s {
+    KDoc *d = [KDoc new]; d.storage = [[NSTextStorage alloc] initWithString:@""]; d.undo = [NSUndoManager new]; d.sel = NSMakeRange(0,0);
+    [self.docs addObject:d]; [self setCur:d];
+}
 - (void)openDoc:(id)s {
     NSOpenPanel *o = [NSOpenPanel openPanel]; o.allowedFileTypes = nil; o.allowsMultipleSelection = NO;
     if ([o runModal] == NSModalResponseOK && o.URLs.count) [self loadPath:o.URLs[0].path];
 }
 - (BOOL)writeTo:(NSString *)p {
-    NSError *e = nil;
-    BOOL ok = [self.tv.string writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:&e];
-    if (ok) { self.path = p; self.win.documentEdited = NO; [self applyTitle]; }
+    BOOL ok = [self.tv.string writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    if (ok) { self.cur.path = p; self.cur.dirty = NO; self.path = p;
+        self.cur.grammar = [self grammarForPath:p]; gActiveGrammar = self.cur.grammar; highlight(self.cur.storage);
+        [self applyTitle]; [self.tabBar setNeedsDisplay:YES]; }
     return ok;
 }
 - (void)saveDoc:(id)s {
@@ -412,7 +473,8 @@ static void highlight(NSTextStorage *ts) {
     sp.nameFieldStringValue = self.path ? self.path.lastPathComponent : @"untitled.k";
     if ([sp runModal] == NSModalResponseOK) [self writeTo:sp.URL.path];
 }
-- (void)closeDoc:(id)s { [self.win performClose:nil]; }
+- (void)closeDoc:(id)s { [self closeDocAt:[self.docs indexOfObject:self.cur]]; }
+- (NSUndoManager *)undoManagerForTextView:(NSTextView *)v { return self.cur.undo ?: v.undoManager; }
 
 // Build with kcc — saves first, runs `kcc --native <file>`, shows output.
 - (void)build:(id)s {
@@ -635,18 +697,56 @@ static BOOL fuzzy(NSString *hay, NSString *needle) {
 // --- syntax re-highlight on edit ---
 - (void)textStorage:(NSTextStorage *)ts didProcessEditing:(NSTextStorageEditActions)e range:(NSRange)r changeInLength:(NSInteger)dl {
     if (!(e & NSTextStorageEditedCharacters)) return;
-    dispatch_async(dispatch_get_main_queue(), ^{ highlight(ts); self.win.documentEdited = YES; });
+    dispatch_async(dispatch_get_main_queue(), ^{ highlight(ts); self.cur.dirty = YES; self.win.documentEdited = YES; [self.tabBar setNeedsDisplay:YES]; });
 }
 - (BOOL)windowShouldClose:(NSWindow *)w {
-    if (!self.win.documentEdited) return YES;
-    NSAlert *a = [[NSAlert alloc] init]; a.messageText = @"Save changes?";
-    [a addButtonWithTitle:@"Save"]; [a addButtonWithTitle:@"Discard"]; [a addButtonWithTitle:@"Cancel"];
+    BOOL any = NO; for (KDoc *d in self.docs) if (d.dirty) any = YES;
+    if (!any) return YES;
+    NSAlert *a = [[NSAlert alloc] init]; a.messageText = @"Save all changes before closing?";
+    [a addButtonWithTitle:@"Save All"]; [a addButtonWithTitle:@"Discard"]; [a addButtonWithTitle:@"Cancel"];
     NSModalResponse r = [a runModal];
-    if (r == NSAlertFirstButtonReturn) { [self saveDoc:nil]; return !self.win.documentEdited; }
     if (r == NSAlertSecondButtonReturn) return YES;
-    return NO;
+    if (r == NSAlertThirdButtonReturn) return NO;
+    for (KDoc *d in [self.docs copy]) if (d.dirty) { [self setCur:d]; [self saveDoc:nil]; }
+    BOOL still = NO; for (KDoc *d in self.docs) if (d.dirty) still = YES;
+    return !still;
 }
 - (void)windowWillClose:(NSNotification *)n { [NSApp terminate:nil]; }
+@end
+
+@implementation KTabBar
+- (void)drawRect:(NSRect)dirty {
+    [[NSColor colorWithCalibratedRed:0.11 green:0.11 blue:0.13 alpha:1] set]; NSRectFill(self.bounds);
+    self.hit = [NSMutableArray array];
+    Editor *ed = self.ed; if (!ed) return;
+    CGFloat x = 0, h = self.bounds.size.height;
+    NSDictionary *act = @{NSForegroundColorAttributeName:[NSColor colorWithCalibratedWhite:0.92 alpha:1], NSFontAttributeName:[NSFont systemFontOfSize:12]};
+    NSDictionary *ina = @{NSForegroundColorAttributeName:[NSColor colorWithCalibratedWhite:0.56 alpha:1], NSFontAttributeName:[NSFont systemFontOfSize:12]};
+    NSColor *xc = [NSColor colorWithCalibratedWhite:0.6 alpha:1];
+    for (KDoc *d in ed.docs) {
+        BOOL cur = (d == ed.cur); NSString *nm = d.title;
+        CGFloat tw = MIN([nm sizeWithAttributes:act].width + 48, 220);
+        NSRect tab = NSMakeRect(x, 0, tw, h);
+        [self.hit addObject:[NSValue valueWithRect:tab]];
+        if (cur) { [[NSColor colorWithCalibratedRed:0.145 green:0.145 blue:0.165 alpha:1] set]; NSRectFill(tab);
+                   [[NSColor colorWithCalibratedRed:0.24 green:0.60 blue:0.95 alpha:1] set]; NSRectFill(NSMakeRect(x, h-2, tw, 2)); }
+        [nm drawAtPoint:NSMakePoint(x+12, (h-15)/2) withAttributes:(cur?act:ina)];
+        if (d.dirty) { [[NSColor colorWithCalibratedWhite:0.78 alpha:1] set]; NSRectFill(NSMakeRect(x+tw-18, (h-7)/2, 7, 7)); }
+        else { [@"⨯" drawAtPoint:NSMakePoint(x+tw-19, (h-16)/2) withAttributes:@{NSForegroundColorAttributeName:xc, NSFontAttributeName:[NSFont systemFontOfSize:13]}]; }
+        [[NSColor colorWithCalibratedWhite:0.07 alpha:1] set]; NSRectFill(NSMakeRect(x+tw-1, 0, 1, h));
+        x += tw;
+    }
+}
+- (void)mouseDown:(NSEvent *)e {
+    NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
+    for (NSInteger i = 0; i < (NSInteger)self.hit.count; i++) {
+        NSRect t = [self.hit[i] rectValue];
+        if (NSPointInRect(p, t)) {
+            if (p.x > NSMaxX(t) - 24) [self.ed closeDocAt:i]; else [self.ed selectDocAt:i];
+            [self setNeedsDisplay:YES]; return;
+        }
+    }
+}
 @end
 
 static NSString *_shq(NSString *s) { return [NSString stringWithFormat:@"'%@'", [s stringByReplacingOccurrencesOfString:@"'" withString:@"'\\''"]]; }
@@ -699,6 +799,9 @@ static void buildMenu(void) {
     NSMenu *nav = [[NSMenu alloc] initWithTitle:@"Navigate"];
     mi(nav, @"Quick Open…", @selector(quickOpen:), @"p", gEd);
     mi(nav, @"Go to Line…", @selector(goToLine:), @"l", gEd);
+    [nav addItem:[NSMenuItem separatorItem]];
+    mi(nav, @"Next Tab", @selector(nextTab:), @"]", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
+    mi(nav, @"Previous Tab", @selector(prevTab:), @"[", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
     nI.submenu = nav;
     // Window + Help
     NSMenuItem *wI = [[NSMenuItem alloc] init]; [main addItem:wI];
@@ -839,7 +942,15 @@ int main(int argc, const char *argv[]) {
         NSSplitView *split = [[NSSplitView alloc] initWithFrame:NSMakeRect(0, 22, frame.size.width, frame.size.height - 22)];
         split.vertical = YES; split.dividerStyle = NSSplitViewDividerStyleThin;
         split.autoresizingMask = (NSViewWidthSizable | NSViewHeightSizable);
-        [split addSubview:leftPane]; [split addSubview:scroll];
+        // right pane = tab bar (top) + editor
+        NSView *rightPane = [[NSView alloc] initWithFrame:NSMakeRect(0,0,frame.size.width-210, frame.size.height-22)];
+        rightPane.autoresizesSubviews = YES;
+        KTabBar *tabBar = [[KTabBar alloc] initWithFrame:NSMakeRect(0, rightPane.bounds.size.height-28, rightPane.bounds.size.width, 28)];
+        tabBar.ed = gEd; tabBar.autoresizingMask = (NSViewWidthSizable|NSViewMinYMargin); gEd.tabBar = tabBar;
+        scroll.frame = NSMakeRect(0,0, rightPane.bounds.size.width, rightPane.bounds.size.height-28);
+        scroll.autoresizingMask = (NSViewWidthSizable|NSViewHeightSizable);
+        [rightPane addSubview:tabBar]; [rightPane addSubview:scroll];
+        [split addSubview:leftPane]; [split addSubview:rightPane];
         [split adjustSubviews]; [split setPosition:210 ofDividerAtIndex:0];
 
         NSView *container = [[NSView alloc] initWithFrame:frame];
@@ -856,6 +967,7 @@ int main(int argc, const char *argv[]) {
         [container addSubview:status];
         win.contentView = container;
         gEd.win = win; gEd.tv = tv; gEd.status = status;
+        gEd.docs = [NSMutableArray array]; tv.delegate = gEd;   // multi-document tabs + per-doc undo
 
         // toolbar — makes it read as a Mac app, not a terminal
         NSToolbar *tb = [[NSToolbar alloc] initWithIdentifier:@"kcodeToolbar"];
@@ -871,6 +983,7 @@ int main(int argc, const char *argv[]) {
                 if (d) [gEd setFolder:p]; else [gEd loadPath:p];
             }
         }
+        if (gEd.docs.count == 0) [gEd newDoc:nil];     // always one open document
         [gEd applyTitle];
         [gEd updateStatus];
 
