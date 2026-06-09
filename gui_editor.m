@@ -233,6 +233,8 @@ static void highlight(NSTextStorage *ts) {
 }
 
 // ── Line-number ruler ──────────────────────────────────────────────────────
+@class Editor;
+static Editor *gEd;
 @interface LineRuler : NSRulerView
 @property (weak) NSTextView *tv;
 @end
@@ -307,8 +309,6 @@ static void highlight(NSTextStorage *ts) {
 @end
 
 // ── open document + tab bar ─────────────────────────────────────────────────
-@class Editor;
-static Editor *gEd;
 static void kcodeOpenPath(NSString *p);   // defined after Editor
 @interface KDoc : NSObject
 @property (strong) NSTextStorage *storage;
