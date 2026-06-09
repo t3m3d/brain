@@ -770,6 +770,22 @@ static NSAttributedString *parseTermSGR(NSData *data, NSFont *font) {
     NSRange at = NSMakeRange(lines.location, 0);
     if ([self.tv shouldChangeTextInRange:at replacementString:ins]) { [self.tv replaceCharactersInRange:at withString:ins]; [self.tv didChangeText]; }
 }
+- (void)highlightBrackets {
+    NSTextStorage *ts = self.tv.textStorage; NSString *s = ts.string; NSUInteger n = s.length;
+    [ts removeAttribute:NSBackgroundColorAttributeName range:NSMakeRange(0, n)];
+    if (self.tv.selectedRange.length > 0) return;
+    NSUInteger loc = self.tv.selectedRange.location;
+    static const char op[3] = {'(','[','{'}, cl[3] = {')',']','}'};
+    NSInteger pos = -1; int dir = 0; unichar have = 0, want = 0;
+    if (loc < n) { unichar c = [s characterAtIndex:loc]; for (int k=0;k<3;k++) if (c==op[k]) { pos=loc; have=op[k]; want=cl[k]; dir=1; } }
+    if (pos < 0 && loc > 0) { unichar c = [s characterAtIndex:loc-1]; for (int k=0;k<3;k++) if (c==cl[k]) { pos=loc-1; have=cl[k]; want=op[k]; dir=-1; } }
+    if (pos < 0) return;
+    NSInteger depth = 1, i = pos + dir;
+    while (i >= 0 && i < (NSInteger)n) { unichar c = [s characterAtIndex:i]; if (c==have) depth++; else if (c==want) { depth--; if (!depth) break; } i += dir; }
+    NSColor *hl = [NSColor colorWithCalibratedRed:0.30 green:0.55 blue:0.45 alpha:0.5];
+    [ts addAttribute:NSBackgroundColorAttributeName value:hl range:NSMakeRange(pos, 1)];
+    if (i >= 0 && i < (NSInteger)n && !depth) [ts addAttribute:NSBackgroundColorAttributeName value:hl range:NSMakeRange(i, 1)];
+}
 - (void)toggleSidebar:(id)s {
     NSSplitView *sp = self.hsplit; if (!sp) return;
     BOOL collapsed = [sp isSubviewCollapsed:sp.subviews[0]] || NSWidth([sp.subviews[0] frame]) < 2;
@@ -1192,7 +1208,7 @@ int main(int argc, const char *argv[]) {
         LineRuler *ruler = [[LineRuler alloc] initWithScrollView:scroll orientation:NSVerticalRuler];
         ruler.tv = tv; ruler.ruleThickness = 44;
         scroll.verticalRulerView = ruler;
-        [[NSNotificationCenter defaultCenter] addObserverForName:NSTextViewDidChangeSelectionNotification object:tv queue:nil usingBlock:^(NSNotification *_n){ [ruler setNeedsDisplay:YES]; [gEd updateStatus]; }];
+        [[NSNotificationCenter defaultCenter] addObserverForName:NSTextViewDidChangeSelectionNotification object:tv queue:nil usingBlock:^(NSNotification *_n){ [ruler setNeedsDisplay:YES]; [gEd updateStatus]; [gEd highlightBrackets]; }];
         [[NSNotificationCenter defaultCenter] addObserverForName:NSViewBoundsDidChangeNotification object:scroll.contentView queue:nil usingBlock:^(NSNotification *_n){ [ruler setNeedsDisplay:YES]; }];
         scroll.contentView.postsBoundsChangedNotifications = YES;
 
