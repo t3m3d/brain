@@ -1042,6 +1042,18 @@ static BOOL fuzzy(NSString *hay, NSString *needle) {
     if (!(e & NSTextStorageEditedCharacters)) return;
     dispatch_async(dispatch_get_main_queue(), ^{ highlight(ts); self.cur.dirty = YES; self.win.documentEdited = YES; [self.tabBar setNeedsDisplay:YES]; });
 }
+- (void)toggleAutoSave:(id)s {
+    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+    [ud setBool:![ud boolForKey:@"kcodeAutoSave"] forKey:@"kcodeAutoSave"];
+}
+- (void)windowDidResignKey:(NSNotification *)n {
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"kcodeAutoSave"]) return;
+    BOOL any = NO;
+    for (KDoc *d in self.docs) if (d.dirty && d.path) {
+        if ([d.storage.string writeToFile:d.path atomically:YES encoding:NSUTF8StringEncoding error:nil]) { d.dirty = NO; any = YES; }
+    }
+    if (any) { [self.tabBar setNeedsDisplay:YES]; self.win.documentEdited = NO; }
+}
 - (BOOL)windowShouldClose:(NSWindow *)w {
     BOOL any = NO; for (KDoc *d in self.docs) if (d.dirty) any = YES;
     if (!any) return YES;
@@ -1128,6 +1140,7 @@ static void buildMenu(void) {
     [f addItem:[NSMenuItem separatorItem]];
     mi(f, @"Save", @selector(saveDoc:), @"s", gEd);
     mi(f, @"Save As…", @selector(saveAs:), @"S", gEd).keyEquivalentModifierMask = (NSEventModifierFlagCommand|NSEventModifierFlagShift);
+    mi(f, @"Auto Save", @selector(toggleAutoSave:), @"", gEd);
     [f addItem:[NSMenuItem separatorItem]];
     mi(f, @"Build", @selector(build:), @"b", gEd);
     [f addItem:[NSMenuItem separatorItem]];
