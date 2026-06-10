@@ -1,12 +1,5 @@
 #!/usr/bin/env bash
-# make-app.sh — build a macOS .app bundle around the kcode binary.
-#
-# Output: dist/kcode.app
-#
-# Double-clicking the bundle (or `open dist/kcode.app`) launches a fresh
-# Terminal.app window running kcode. Dragged-on files are passed through
-# to kcode as argv. Info.plist registers the bundle as a handler for
-# .k files so right-click → Open With → kcode works in Finder.
+
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -111,8 +104,6 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Macs that haven't seen this bundle yet need the Launch Services DB
-# refreshed before file associations kick in. Best-effort; ignore failure.
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
     -f "$APP" 2>/dev/null || true
 
