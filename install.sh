@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-# install.sh — symlink ./kcode into a bin dir.
-# Usage: ./install.sh [PREFIX]    # default PREFIX=/usr/local
-#
-# Mirrors krypton's install pattern (symlink → repo) so future
-# `./build.sh` runs are picked up automatically.
 set -euo pipefail
 
 PREFIX="${1:-/usr/local}"
