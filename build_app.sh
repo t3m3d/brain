@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-# build_app.sh — assemble kcode.app: a native macOS editor for Krypton.
-#
-# kcode.app is a Cocoa NSTextView editor (native editing/scroll/find/undo) with
-# Krypton syntax highlighting + Build via the Krypton compiler `kcc`. The window
-# + text surface are Obj-C (Cocoa); the language + compiler are Krypton.
 set -e
 cd "$(dirname "$0")"
 APP="kcode.app"
