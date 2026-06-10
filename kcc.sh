@@ -9,8 +9,6 @@ done
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 
 # ── Platform detection ─────────────────────────────────────────────
-# On Linux: ./kcc (ELF), --native uses elf.k → ELF
-# On Windows / MSYS: ./kcc.exe, --native uses x64.k → PE/COFF
 case "$(uname -s 2>/dev/null)" in
     Linux*)  PLATFORM=linux ;;
     Darwin*) PLATFORM=macos ;;
@@ -51,8 +49,8 @@ IRFLAG=""
 NATIVE_MODE=0
 LLVM_MODE=0
 GCC_MODE=0
-GCC_EXPLICIT=0  # tracks whether --gcc was passed (vs. implicit default on macOS)
-C_MODE=0       # --c: emit C source (legacy; default is native binary now)
+GCC_EXPLICIT=0
+C_MODE=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -83,11 +81,6 @@ if [[ -n "$IRFLAG" && -z "$OUTFILE" ]]; then
 fi
 
 # ── --native pipeline ───────────────────────────────────────────────
-# Linux:   .k → .kir → elf.k → ELF binary (no gcc, no libc)
-# Windows: .k → .kir → optimize → x64.k → .exe (no gcc, needs krypton_rt.dll)
-# macOS:   .k → .kir → macho.k → .s → clang → Mach-O (clang+ld required;
-#                                                    AMFI on Tahoe forbids
-#                                                    self-emitted Mach-O)
 if [[ $NATIVE_MODE -eq 1 ]]; then
     if [[ -z "$OUTFILE" ]]; then
         if [[ "$PLATFORM" == "linux" || "$PLATFORM" == "macos" ]]; then
@@ -99,17 +92,10 @@ if [[ $NATIVE_MODE -eq 1 ]]; then
     TMPIR="/tmp/_kcc_native_$$.kir"
 
     if [[ "$PLATFORM" == "macos" ]]; then
-        # macOS arm64: compiler/macos_arm64/macho_arm64_self.k writes a
-        # signed Mach-O directly (load commands, __TEXT/__DATA/__LINKEDIT,
-        # chained fixups, ad-hoc SHA-256 code signature — all in Krypton).
-        # NO clang, no `as`, no `ld`, no external codesign.
         MACHO_DIR="$SCRIPT_DIR/compiler/macos_arm64"
         MACHO_BIN="$MACHO_DIR/macho_host"
         MACHO_SRC="$MACHO_DIR/macho_arm64_self.k"
 
-        # Build macho host if missing or stale (one-time bootstrap; uses kcc
-        # itself + the host C compiler that built kcc). Subsequent runs reuse
-        # the binary directly.
         if [[ ! -f "$MACHO_BIN" || "$MACHO_SRC" -nt "$MACHO_BIN" ]]; then
             CC_HOST="${CC:-clang}"
             command -v "$CC_HOST" >/dev/null || {
@@ -150,12 +136,6 @@ if [[ $NATIVE_MODE -eq 1 ]]; then
         ELF_SEED="$SCRIPT_DIR/bootstrap/elf_host_${PLATFORM}_${_ARCH}"
         OPT_SEED="$SCRIPT_DIR/bootstrap/optimize_host_${PLATFORM}_${_ARCH}"
 
-        # Build / restore elf_host
-        # Native rebuild path (preferred): use existing elf_host (or seed) to
-        # compile the new elf.k via the .k → .kir → ELF pipeline. Currently
-        # blocked by elf.k-self-host bug at >66 funcs (see REBUILD_SEED.md);
-        # until that's fixed, the gcc rebuild stays as a one-time bootstrap
-        # for users who edit elf.k. End users with prebuilt seeds never hit it.
         if [[ ! -f "$ELF_BIN" || "$ELF_SRC" -nt "$ELF_BIN" ]]; then
             if [[ -f "$ELF_SEED" && "$ELF_SEED" -nt "$ELF_SRC" ]]; then
                 cp "$ELF_SEED" "$ELF_BIN"
@@ -173,9 +153,6 @@ if [[ $NATIVE_MODE -eq 1 ]]; then
             fi
         fi
 
-        # Build / restore optimize_host (best-effort — if it fails to build we
-        # fall through to skip-optimize mode rather than blocking the build).
-        # Same one-time-gcc situation as elf_host above.
         if [[ ! -f "$OPT_BIN" || "$OPT_SRC" -nt "$OPT_BIN" ]]; then
             if [[ -f "$OPT_SEED" && "$OPT_SEED" -nt "$OPT_SRC" ]]; then
                 cp "$OPT_SEED" "$OPT_BIN"
@@ -220,10 +197,6 @@ if [[ $NATIVE_MODE -eq 1 ]]; then
     OPT_SEED="$SCRIPT_DIR/bootstrap/optimize_host_windows_x86_64.exe"
     X64_SEED="$SCRIPT_DIR/bootstrap/x64_host_windows_x86_64.exe"
 
-    # One-time gcc bootstrap (Windows side). Same situation as Linux: end
-    # users with prebuilt seeds don't hit this; only triggered if you edit
-    # x64.k or optimize.k. Goal is to drop these by routing rebuild through
-    # the native pipeline once x64.k self-host parity is verified.
     if [[ ! -f "$OPT_BIN" || "$OPT_SRC" -nt "$OPT_BIN" ]]; then
         if [[ -f "$OPT_SEED" && "$OPT_SEED" -nt "$OPT_SRC" ]]; then
             cp "$OPT_SEED" "$OPT_BIN"
@@ -288,9 +261,6 @@ if [[ $LLVM_MODE -eq 1 ]]; then
 fi
 
 # ── --c (legacy): emit C source ──────────────────────────────────
-# Without -o, prints to stdout. With -o, writes to file.
-# Same as the old default behaviour of `kcc.sh foo.k`. Kept for users who
-# still want C output (porting to other platforms, debugging codegen, etc.).
 if [[ $C_MODE -eq 1 ]]; then
     if [[ -z "$OUTFILE" ]]; then
         "$KCC_EXE" $HEADERS_FLAG "$SRCFILE"
@@ -302,11 +272,6 @@ if [[ $C_MODE -eq 1 ]]; then
 fi
 
 # ── Default: produce a native binary ─────────────────────────────
-# No -o: derive output name from source basename (e.g. hello.k → hello on
-#        Linux/macOS, hello.exe on Windows).
-# Linux/Windows: native pipeline (elf.k / x64.k → ELF/PE, no gcc).
-# macOS:         falls back to C+clang internally (Mach-O backend in progress).
-# --gcc:         force C+gcc on any platform.
 if [[ -z "$OUTFILE" ]]; then
     if [[ "$PLATFORM" == "linux" || "$PLATFORM" == "macos" ]]; then
         OUTFILE="${SRCFILE%.k}"
@@ -316,11 +281,6 @@ if [[ -z "$OUTFILE" ]]; then
 fi
 
 if [[ "$GCC_MODE" -ne 1 ]]; then
-    # macOS native (macho_arm64_self.k) is slice-3f — handles a useful subset
-    # but lacks CAT, range, list-iteration, polymorphic ADD, and ~100 more
-    # builtins. For full feature parity (template strings, for-in, etc.) the
-    # implicit default on macOS is the C+clang path. Use --native to opt
-    # into the self-hosted path explicitly.
     if [[ "$PLATFORM" == "macos" ]]; then
         GCC_MODE=1
     else
@@ -329,18 +289,6 @@ if [[ "$GCC_MODE" -ne 1 ]]; then
     fi
 fi
 
-# ──────────────────────────────────────────────────────────────────────────
-# C+clang/gcc path. Used when:
-#   - --gcc was passed explicitly (deprecation warning shown)
-#   - macOS implicit default (no warning — until macho_arm64_self.k catches up)
-# Krypton's stated long-term goal is no C-language tools in operations;
-# native pipelines are the future:
-#   - Linux:   elf.k self-host bug at >66 funcs (bug #3 in REBUILD_SEED.md)
-#   - Windows: x64.k self-host parity not yet verified
-#   - macOS:   macho_arm64_self.k handles slice 3f surface only
-# Once each platform's native rebuild path replaces gcc in kcc.sh's lazy
-# host-rebuild block, --gcc gets removed entirely.
-# ──────────────────────────────────────────────────────────────────────────
 if [[ "$GCC_EXPLICIT" -eq 1 ]]; then
     echo "kcc: warning: --gcc is deprecated; native is the default and goal." >&2
     echo "kcc: see bootstrap/REBUILD_SEED.md for the path to gcc-free." >&2
