@@ -1,10 +1,4 @@
 #!/usr/bin/env bash
-# Build kcode — krypton-lang's terminal IDE (pure Krypton, native macho backend).
-#
-# The sources live as modules under src/ for readability, but we compile them
-# MERGED into one file: the macho backend miscompiles cross-module calls once
-# editor.k is present (calls from editor.k into buf.k/kv.k branch into padding ->
-# udf). A single module keeps every call intra-module and resolves correctly.
 set -e
 cd "$(dirname "$0")"
 
