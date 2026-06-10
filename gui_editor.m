@@ -1,13 +1,3 @@
-// gui_editor.m — kcode, a native macOS editor for Krypton (.k / .ks).
-//
-// A real Cocoa app: NSTextView gives native editing, selection, scrolling,
-// undo/redo, find, cut/copy/paste. We add: Krypton syntax highlighting, a File
-// menu (New/Open/Save/Save As/Close), a line-number ruler, and Build/Run via the
-// Krypton compiler `kcc`. The compiler + the language are Krypton; this shim is
-// the native window + text surface.
-//
-// Build: clang -framework Cocoa -fobjc-arc -O2 gui_editor.m -o kcode-gui
-
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
 
