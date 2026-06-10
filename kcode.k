@@ -1,43 +1,11 @@
-// kcode.k — Krypton's portable code editor.
-//
-// Single-file editor written in Krypton on top of stdlib/gui.k.
-// Same source builds and runs on Windows (Win32 + Common Controls v6)
-// and macOS (Cocoa via the Objective-C runtime).
-//
-// Build:
-//   macOS:   kcc kcode.k -o kcode -Wl,-framework,Cocoa -lobjc
-//   Windows: kcc kcode.k -o kcode.exe -luser32 -lgdi32 -lcomctl32 \
-//                 -lcomdlg32 -lole32 -lshell32 -ldwmapi -luxtheme \
-//                 -ladvapi32
-//
-// Features (parity across both backends):
-//   - File menu:    New, Open…, Save, Save As…, Quit
-//   - Toolbar:      New / Open / Save buttons mirroring the menu
-//   - Editor:       Multi-line text area filling the window
-//   - Status bar:   Open file path on the left, encoding on the right
-//   - Help menu:    About
-//
-// Open and Save use the system file pickers. Open round-trips the
-// file's bytes through the text area; Save writes the text area's
-// current bytes back. Save with no associated path falls through to
-// Save As… so first-time writes always prompt for a destination.
-
 import "stdlib/gui.k"
 import "stdlib/io_utils.k"
 
-
-// Module state — the menu / toolbar callbacks read these directly.
-// Declared above the jxt/cfunc blocks so kcc emits their C-level
-// definitions before any function body that references them.
 let g_win    = ""
 let g_area   = ""
 let g_status = ""
 let g_path   = ""
 
-
-// stdlib/gui.k doesn't expose a writeFile helper yet, so wrap fwrite.
-// fopen/fwrite/fclose are already declared by stdio.krh on both
-// platforms — no extra link flags needed.
 jxt {
     func krFileWrite(path, text) -> char_ptr
 }
@@ -165,7 +133,6 @@ just run {
     guiStatusParts(g_status, "*,80")
 
     // ── Editor body — fills the middle, dock manager keeps it
-    //     resized as the window grows.
     g_area = guiTextArea(g_win, 0, 36, 820, 460)
 
     let dock = guiDock(g_win)
