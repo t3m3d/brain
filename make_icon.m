@@ -1,5 +1,3 @@
-// make_icon.m — render kcode.icns (violet squircle + code glyph).
-// clang -framework Cocoa make_icon.m -o /tmp/mkicon && /tmp/mkicon
 #import <Cocoa/Cocoa.h>
 
 static NSData *renderPNG(int S) {
