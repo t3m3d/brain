@@ -1,26 +1,5 @@
 #!/usr/bin/env bash
-# kcc - Krypton compiler driver
-#
-# Usage: kcc source.k [-o output] [--native | --llvm | --c | --ir]
-#
-# DEFAULT (no flag, no -o):  produce a native binary at ./<basename>
-# DEFAULT (no flag, with -o): produce a native binary at <output>
-#   The native pipeline is elf.k → ELF on Linux, x64.k → PE/COFF on Windows,
-#   macho_arm64_self.k → Mach-O on macOS arm64. NO C compiler involved at
-#   user-invocation time on any of those platforms.
-#
-# --native:  explicit native pipeline (same as default)
-# --c:       emit C source — to stdout if no -o, to <output> if -o (debug aid)
-# --llvm:    emit LLVM IR — to stdout if no -o, to <output> if -o
-# --ir:      emit Krypton IR (.kir) to stdout
-#
-# DEPRECATED:
-# --gcc:     C+gcc/clang fallback. Krypton's stated goal is no C-language
-#            tools in operations. This flag will be removed once every
-#            platform's native pipeline is verified stable. Don't use it
-#            for new work; if native fails, file a bug.
 
-# Resolve through symlinks so /usr/local/bin/kcc.sh → repo/kcc.sh finds repo files.
 SOURCE="${BASH_SOURCE[0]}"
 while [ -L "$SOURCE" ]; do
     SDIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
