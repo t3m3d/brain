@@ -1,19 +1,10 @@
-#!/usr/bin/env bash
+#!/bin/bash
+# brain — pure-Krypton macOS IDE (objk FFI). No Obj-C source.
+# Build needs a Krypton checkout (compiler + stdlib + objk app packager).
 set -e
-cd "$(dirname "$0")"
-
-MERGED="$(mktemp /tmp/kcode_merged.XXXXXX).ks"
-{
-  echo "// AUTO-MERGED by build.sh — edit src/*.k, not this. Single module dodges"
-  echo "// the macho cross-module call relocation bug. Order: term, kv, buf, editor."
-  for f in src/term.k src/kv.k src/buf.k src/editor.k; do
-    grep -vE '^module |^import ' "$f"
-  done
-  echo ""
-  echo "just run { kcodeMain() }"   # minimal entry (kcc miscompiles 2+ let in just-run)
-} > "$MERGED"
-
-kcc --native "$MERGED" -o kcode
-codesign -s - -f kcode 2>/dev/null || true   # ad-hoc sign for AMFI on Tahoe
-rm -f "$MERGED"
-echo "built ./kcode"
+KRYPTON="${KRYPTON:-$HOME/Documents/GitHub/krypton}"
+[ -d "$KRYPTON/scripts" ] || { echo "set KRYPTON= to a krypton checkout"; exit 1; }
+cp brain.ks brain.icns "$KRYPTON/examples/objk/"
+( cd "$KRYPTON" && ./scripts/build-objk-app.sh examples/objk/brain.ks brain )
+rm -rf brain.app && cp -R "$KRYPTON/dist/brain.app" .
+echo "built brain.app"
