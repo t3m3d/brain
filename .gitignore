@@ -350,3 +350,5 @@ UpgradeLog*.XML
 # Objective K build output
 brain.app/
 dist/brain.app/
+
+dist/brain-store.app/

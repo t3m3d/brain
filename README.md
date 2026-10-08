@@ -38,5 +38,23 @@ kr kcc.ks --version         # forwards to the installed native driver
 ```
 
 `brain.icns` is optional. Build failures preserve the existing app. The editor
-uses a coordinated dark palette, inset text, and accented active tabs through
-Objective K's Cocoa bindings.
+restores kcode's charcoal palette, native toolbar, split panes, blue active tabs,
+line-number gutter, minimap, and cursor status through Objective K's Cocoa bindings.
+The app menu includes Quit (⌘Q); View → Toggle Terminal (⌘J) expands/collapses
+and focuses the terminal. Long lines scroll horizontally so gutter numbers stay
+aligned. The sidebar currently navigates one folder at a time.
+
+## Release work
+
+The Objective K app is a development preview. Release acceptance and remaining
+issues are tracked in [docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md).
+
+```
+kr build.ks
+kr tests/editor_regression.ks  # native document-model and Unicode regressions
+kr build_store.ks              # sandboxed editor-only preview in dist/
+```
+
+The Store preview omits the terminal and external compiler. The full developer
+edition remains available. Store previews use ad-hoc signing for local sandbox
+testing; they are not signed archives suitable for App Store submission.
