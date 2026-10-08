@@ -911,7 +911,10 @@ import "k:objc"
 import "head:cocoa"
 import "head:objc"
 
-func projDir() { let d = "" + arg(0)  if len(d) == 0 { emit environ("HOME") }  emit d }
+func projDir() {
+  if argCount() > 0 { let d = "" + arg(0)  if len(d) > 0 { emit d } }
+  emit environ("HOME")
+}
 func baseName(p) { let n = len(p)  let i = n - 1  while i >= 0 { if p[i] == "/" { emit substring(p, i + 1, n) }  i = i - 1 }  emit p }
 
 func nlines(s) { let n = len(s)  let c = 0  let i = 0  while i < n { if s[i] == "\n" { c = c + 1 }  i = i + 1 }  emit c }
@@ -1087,11 +1090,25 @@ func reHL(self, cmd, notif) {
   if cocoaTSEditedChars(ts) == 0 { emit "1" }
   // paint base text light first; token colours overlay (removeAttribute would
   // fall back to black on the dark bg).
-  cocoaTSColorRange(ts, cocoaRGB(212, 212, 212), 0, cocoaTSLength(ts))
+  cocoaTSColorRange(ts, themeText(), 0, cocoaTSLength(ts))
   let lang = cocoaGetAssocKey(appH(), "brain.lang")
   let ext = ""
   if lang != 0 { ext = msg(lang, "UTF8String") }
   highlightLang(ts, cocoaTSString(ts), ext)
+  refreshEditorChrome()
+  emit "1"
+}
+
+// Shared Objective K theme: calm navy surfaces and a mint focus accent.
+func themeCanvas() { emit cocoaRGB(31, 31, 36) }
+func themeSidebar() { emit cocoaRGB(37, 37, 42) }
+func themeText() { emit cocoaRGB(217, 219, 214) }
+func themeAccent() { emit cocoaRGB(92, 181, 237) }
+func themeSurface(view, color, radius) {
+  msg_1(view, "setWantsLayer:", 1)
+  let layer = msg(view, "layer")
+  msg_1(layer, "setBackgroundColor:", msg(color, "CGColor"))
+  msg_d1(layer, "setCornerRadius:", radius)
   emit "1"
 }
 
@@ -1122,15 +1139,27 @@ func rebuildTabs() {
   let paths = cocoaGetAssocKey(app, "brain.tabpaths")
   let n = cocoaArrayCount(paths)
   let cur = curTabIdx()
-  let x = 244
+  let x = 4
   let i = 0
   while i < n {
     let nm = baseName(msg(cocoaArrayGet(paths, i), "UTF8String"))
     // tab width includes room for the ✕ on the right
     let w = 70 + len(nm) * 7 + 22
     if w > 220 { w = 220 }
-    let nameb = cocoaButton(win, nm, x, 610, w, 26)
-    msg_1(nameb, "setBezelStyle:", 1)
+    let nameb = cocoaButton(win, nm, x, 4, w, 26)
+    msg(nameb, "removeFromSuperview")
+    msg_1(cocoaGetAssocKey(app, "brain.tabbar"), "addSubview:", nameb)
+    msg_1(nameb, "setBordered:", 0)
+    cocoaSetFont(nameb, cocoaMonoFont(12))
+    let tabColor = themeCanvas()
+    if i == cur { tabColor = themeSidebar() }
+    themeSurface(nameb, tabColor, 0)
+    cocoaSetButtonTextColor(nameb, themeText())
+    if i == cur {
+      let accent = pane(cocoaGetAssocKey(app, "brain.tabbar"), x, 29, w, 2, 0)
+      themeSurface(accent, themeAccent(), 0)
+      cocoaArrayAdd(btns, accent)
+    }
     msg_1(nameb, "setAlignment:", 0)
     if i == cur { msg_1(nameb, "setState:", 1) }
     cocoaSetAssocKey(nameb, "idx", cocoaNumber(i))
@@ -1138,13 +1167,15 @@ func rebuildTabs() {
     cocoaArrayAdd(btns, nameb)
     // round ✕ button overlaid on the tab's right edge (on top -> captures its clicks).
     // Layer-drawn circle (exact size) instead of NSBezelStyleCircular (fixed-min, too big).
-    let closeb = cocoaButton(win, "✕", x + w - 26, 617, 16, 16)
+    let closeb = cocoaButton(win, "✕", x + w - 26, 9, 16, 16)
+    msg(closeb, "removeFromSuperview")
+    msg_1(cocoaGetAssocKey(app, "brain.tabbar"), "addSubview:", closeb)
     msg_1(closeb, "setBordered:", 0)
     cocoaSetFont(closeb, cocoaMonoFont(11))
     msg_1(closeb, "setWantsLayer:", 1)
     let lay = msg(closeb, "layer")
     msg_d1(lay, "setCornerRadius:", 8)
-    msg_1(lay, "setBackgroundColor:", msg(cocoaColorNamed("grayColor"), "CGColor"))
+    msg_1(lay, "setBackgroundColor:", msg(themeSidebar(), "CGColor"))
     cocoaSetAssocKey(closeb, "idx", cocoaNumber(i))
     cocoaOnClickKeyed(closeb, "tabclose", funcptr(onTabClose))
     cocoaArrayAdd(btns, closeb)
@@ -1188,6 +1219,7 @@ func selectTab(idx) {
   cocoaTVSetString(cocoaGetAssocKey(app, "brain.editor"), msg(cocoaArrayGet(texts, idx), "UTF8String"))
   msg_1(cocoaGetAssocKey(app, "brain.win"), "setTitle:", nsString("brain — " + msg(cocoaArrayGet(paths, idx), "UTF8String")))
   rebuildTabs()
+  refreshEditorChrome()
   emit "1"
 }
 // ── recent files/folders (~/.config/brain/{files,folders}, newest first) ──
@@ -1239,7 +1271,7 @@ func onNew(self, cmd, sender) {
   let paths = cocoaGetAssocKey(app, "brain.tabpaths")
   let texts = cocoaGetAssocKey(app, "brain.tabtexts")
   cocoaArrayAdd(paths, nsString(projDir() + "/untitled-" + cocoaArrayCount(paths) + ".k"))
-  cocoaArrayAdd(texts, nsString("// new file\n"))
+  cocoaArrayAdd(texts, nsString(""))
   rebuildTabs()
   selectTab(cocoaArrayCount(paths) - 1)
 }
@@ -1419,23 +1451,75 @@ func brainFlag(key, def) {
   if v == 0 { emit def }
   emit cocoaNumberVal(v)
 }
+// Native split views own pane sizes, including during window resizing.
 func relayout() {
   let app = appH()
-  let sb = brainFlag("brain.sidebar", 1)
-  let tm = brainFlag("brain.terminal", 1)
-  let sbw = 240
-  if sb == 0 { sbw = 0 }
-  let topB = 252
-  if tm == 0 { topB = 0 }
-  let treeHidden = 1
-  if sb == 1 { treeHidden = 0 }
-  msg_1(cocoaGetAssocKey(app, "brain.treesv"), "setHidden:", treeHidden)
-  msg_frame(cocoaGetAssocKey(app, "brain.treesv"), "setFrame:", 0, topB, 240, 640 - topB)
-  let termHidden = 1
-  if tm == 1 { termHidden = 0 }
-  msg_1(cocoaGetAssocKey(app, "brain.termsv"), "setHidden:", termHidden)
-  msg_1(cocoaGetAssocKey(app, "brain.kview"), "setHidden:", termHidden)
-  msg_frame(cocoaGetAssocKey(app, "brain.editorsv"), "setFrame:", sbw, topB, 940 - sbw, 608 - topB)
+  let sidebar = cocoaGetAssocKey(app, "brain.sidepane")
+  let terminal = cocoaGetAssocKey(app, "brain.termpane")
+  msg_1(sidebar, "setHidden:", 1 - brainFlag("brain.sidebar", 1))
+  msg_1(terminal, "setHidden:", 1 - brainFlag("brain.terminal", 0))
+  msg(cocoaGetAssocKey(app, "brain.hsplit"), "adjustSubviews")
+  msg(cocoaGetAssocKey(app, "brain.vsplit"), "adjustSubviews")
+  msg(cocoaGetAssocKey(app, "brain.win"), "displayIfNeeded")
+  emit "1"
+}
+func pane(parent, x, y, w, h, mask) {
+  let view = msg_frame(msg(cls("NSView"), "alloc"), "initWithFrame:", x, y, w, h)
+  msg_1(view, "setAutoresizingMask:", mask)
+  msg_1(parent, "addSubview:", view)
+  emit view
+}
+func moveView(view, parent, x, y, w, h, mask) {
+  msg(view, "removeFromSuperview")
+  msg_frame(view, "setFrame:", x, y, w, h)
+  msg_1(view, "setAutoresizingMask:", mask)
+  msg_1(parent, "addSubview:", view)
+  emit "1"
+}
+func installLayout(win, table, editor, term, keys) {
+  let app = appH()
+  let content = msg(win, "contentView")
+  let split = cocoaSplit(win, 0, 22, 1040, 698)
+  msg_1(split, "setAutoresizingMask:", 18)
+  msg_1(split, "setDividerStyle:", 2)
+  let side = pane(split, 0, 0, 210, 698, 16)
+  let right = pane(split, 211, 0, 829, 698, 18)
+  let header = cocoaPlainLabel(win, "  EXPLORER", 0, 672, 210, 26)
+  moveView(header, side, 0, 672, 210, 26, 10)
+  cocoaSetFont(header, msg_d1(cls("NSFont"), "systemFontOfSize:", 11))
+  cocoaSetTextColor(header, cocoaRGB(164, 166, 174))
+  themeSurface(side, themeSidebar(), 0)
+  let treesv = msg(table, "enclosingScrollView")
+  moveView(treesv, side, 0, 0, 210, 672, 18)
+  msg_1(table, "setHeaderView:", 0)
+  let tabs = pane(right, 0, 666, 829, 32, 10)
+  themeSurface(tabs, themeSidebar(), 0)
+  let vertical = msg_frame(msg(cls("NSSplitView"), "alloc"), "initWithFrame:", 0, 0, 829, 666)
+  msg_1(vertical, "setVertical:", 0)
+  msg_1(vertical, "setDividerStyle:", 2)
+  msg_1(vertical, "setAutoresizingMask:", 18)
+  msg_1(right, "addSubview:", vertical)
+  let editPane = pane(vertical, 0, 0, 829, 466, 18)
+  let termPane = pane(vertical, 0, 467, 829, 199, 18)
+  moveView(msg(editor, "enclosingScrollView"), editPane, 0, 0, 829, 466, 18)
+  moveView(msg(term, "enclosingScrollView"), termPane, 0, 0, 829, 199, 18)
+  moveView(keys, termPane, 0, 0, 829, 199, 18)
+  let status = cocoaPlainLabel(win, "  Ln 1, Col 1      TEXT      0 chars", 0, 0, 1040, 22)
+  cocoaSetAssocKey(app, "brain.status", status)
+  msg_1(status, "setDrawsBackground:", 1)
+  cocoaSetBg(status, cocoaRGB(41, 41, 48))
+  msg_1(status, "setAutoresizingMask:", 34)
+  cocoaSetFont(status, cocoaMonoFont(11))
+  cocoaSetTextColor(status, cocoaRGB(164, 166, 174))
+  cocoaSetAssocKey(app, "brain.hsplit", split)
+  cocoaSetAssocKey(app, "brain.vsplit", vertical)
+  cocoaSetAssocKey(app, "brain.sidepane", side)
+  cocoaSetAssocKey(app, "brain.termpane", termPane)
+  cocoaSetAssocKey(app, "brain.tabbar", tabs)
+  cocoaSetAssocKey(app, "brain.terminal", cocoaNumber(0))
+  msg_1(termPane, "setHidden:", 1)
+  msg(split, "adjustSubviews")
+  msg(vertical, "adjustSubviews")
   emit "1"
 }
 func onToggleSidebar(self, cmd, sender) {
@@ -1447,11 +1531,15 @@ func onToggleSidebar(self, cmd, sender) {
   emit "1"
 }
 func onToggleTerminal(self, cmd, sender) {
-  let v = brainFlag("brain.terminal", 1)
+  let v = brainFlag("brain.terminal", 0)
   let nv = 0
   if v == 0 { nv = 1 }
   cocoaSetAssocKey(appH(), "brain.terminal", cocoaNumber(nv))
   relayout()
+  msg_1(sender, "setState:", nv)
+  let focus = cocoaGetAssocKey(appH(), "brain.editor")
+  if nv == 1 { focus = cocoaGetAssocKey(appH(), "brain.kview") }
+  cocoaMakeFirstResponder(cocoaGetAssocKey(appH(), "brain.win"), focus)
   emit "1"
 }
 func brainSetFontSize(sz) {
@@ -1462,6 +1550,104 @@ func brainSetFontSize(sz) {
 func onZoomIn(self, cmd, sender)    { let s = brainFlag("brain.fontsize", 13) + 1  if s > 40 { s = 40 }  brainSetFontSize(s) }
 func onZoomOut(self, cmd, sender)   { let s = brainFlag("brain.fontsize", 13) - 1  if s < 7 { s = 7 }  brainSetFontSize(s) }
 func onZoomReset(self, cmd, sender) { brainSetFontSize(13) }
+
+// kcode's native toolbar: SF Symbols keep the macOS appearance.
+func toolbarIDs(self, cmd, toolbar) {
+  let items = cocoaArray()
+  cocoaArrayAdd(items, nsString("NSToolbarFlexibleSpaceItem"))
+  cocoaArrayAdd(items, nsString("open"))
+  cocoaArrayAdd(items, nsString("save"))
+  cocoaArrayAdd(items, nsString("build"))
+  cocoaArrayAdd(items, nsString("run"))
+  emit items
+}
+func toolbarItem(self, cmd, toolbar, identifier, inserting) {
+  let name = msg(identifier, "UTF8String")
+  let title = "Open"
+  let symbol = "folder"
+  let action = "toolbarOpen:"
+  if name == "save" { title = "Save"  symbol = "square.and.arrow.down"  action = "toolbarSave:" }
+  if name == "build" { title = "Build"  symbol = "hammer"  action = "toolbarBuild:" }
+  if name == "run" { title = "Run"  symbol = "play.fill"  action = "toolbarRun:" }
+  let item = msg_1(msg(cls("NSToolbarItem"), "alloc"), "initWithItemIdentifier:", identifier)
+  msg_1(item, "setLabel:", nsString(title))
+  msg_1(item, "setToolTip:", nsString(title))
+  msg_1(item, "setImage:", msg_2(cls("NSImage"), "imageWithSystemSymbolName:accessibilityDescription:", nsString(symbol), nsString(title)))
+  msg_1(item, "setTarget:", self)
+  msg_1(item, "setAction:", sel(action))
+  emit item
+}
+func onBuild(self, cmd, sender) {
+  let app = appH()
+  let cp = cocoaGetAssocKey(app, "brain.curpath")
+  if cp == 0 { cocoaAlert("Build", "Open a Krypton source file first.")  emit "1" }
+  saveCurTab()
+  let path = msg(cp, "UTF8String")
+  writeFile(path, cocoaTVGetString(cocoaGetAssocKey(app, "brain.editor")))
+  cocoaAlert("Build", exec("kcc --native \"" + path + "\" -o /tmp/kcode-build-output 2>&1"))
+  emit "1"
+}
+// A native ruler, clipped and scrolled together with the editor.
+func rulerFlipped(self, cmd) { emit 1 }
+func drawLineNumbers(self, cmd) {
+  let app = appH()
+  let editor = cocoaGetAssocKey(app, "brain.editor")
+  let sv = msg(editor, "enclosingScrollView")
+  let clip = msg(sv, "contentView")
+  let scrollY = msgPointY(clip, "bounds", 0)
+  let lineHeight = brainFlag("brain.fontsize", 13) + 3
+  let first = scrollY / lineHeight
+  let source = cocoaTVGetString(editor)
+  let total = nlines(source) + 1
+  let attrs = cocoaTextAttrs(cocoaMonoFont(10), cocoaRGB(115, 120, 128))
+  cocoaColorSet(cocoaRGB(40, 40, 40))
+  cocoaFillRect(0, 0, 48, 10000)
+  let line = first
+  let end = first + 200
+  if end > total { end = total }
+  while line < end {
+    cocoaDrawText("" + (line + 1), 8, 7 + line * lineHeight - scrollY, 32, lineHeight, attrs)
+    line = line + 1
+  }
+  emit "1"
+}
+func refreshEditorChrome() {
+  let app = appH()
+  let editor = cocoaGetAssocKey(app, "brain.editor")
+  let status = cocoaGetAssocKey(app, "brain.status")
+  if editor == 0 { emit "1" }
+  let text = msg(editor, "string")
+  let selected = msg(editor, "selectedRange")
+  let prefix = msg(msg_1(text, "substringToIndex:", selected), "UTF8String")
+  let line = nlines(prefix) + 1
+  let pos = len(prefix) - 1
+  while pos >= 0 { if prefix[pos] == "\n" { break }  pos = pos - 1 }
+  let column = len(prefix) - pos
+  msg_1(status, "setStringValue:", nsString("  Ln " + line + ", Col " + column + "      " + msg(cocoaGetAssocKey(app, "brain.lang"), "UTF8String") + "      " + msg(text, "length") + " chars"))
+  msg_1(cocoaGetAssocKey(app, "brain.ruler"), "setNeedsDisplay:", 1)
+  emit "1"
+}
+func onEditorSelection(self, cmd, notification) { refreshEditorChrome()  emit "1" }
+func installRuler(editor) {
+  let app = appH()
+  let sv = msg(editor, "enclosingScrollView")
+  let c = objc_allocateClassPair(cls("NSRulerView"), "KcodeLineRuler", 0)
+  cocoaClassAddMethod(c, "isFlipped", funcptr(rulerFlipped), "c@:")
+  cocoaClassAddMethod(c, "drawHashMarksAndLabelsInRect:", funcptr(drawLineNumbers), "v@:{CGRect={CGPoint=dd}{CGSize=dd}}")
+  cocoaClassRegister(c)
+  let ruler = msg_2(msg(c, "alloc"), "initWithScrollView:orientation:", sv, 1)
+  msg_d1(ruler, "setRuleThickness:", 48)
+  msg_1(ruler, "setClientView:", editor)
+  msg_1(sv, "setVerticalRulerView:", ruler)
+  msg_1(sv, "setHasVerticalRuler:", 1)
+  msg_1(sv, "setRulersVisible:", 1)
+  cocoaSetAssocKey(app, "brain.ruler", ruler)
+  let style = msg(cls("NSMutableParagraphStyle"), "new")
+  msg_d1(style, "setMinimumLineHeight:", 16)
+  msg_d1(style, "setMaximumLineHeight:", 16)
+  msg_1(editor, "setDefaultParagraphStyle:", style)
+  emit "1"
+}
 
 just run {
   let dir = projDir()
@@ -1486,6 +1672,13 @@ just run {
 
   let app = cocoaInit()
   let bar = cocoaMenuBar(app)
+  let appMenu = cocoaMenuAdd(bar, "brain")
+  cocoaMenuItemSel(appMenu, "About brain", "", "orderFrontStandardAboutPanel:")
+  cocoaMenuSeparator(appMenu)
+  cocoaMenuItemSel(appMenu, "Hide brain", "h", "hide:")
+  cocoaMenuItemSel(appMenu, "Show All", "", "unhideAllApplications:")
+  cocoaMenuSeparator(appMenu)
+  cocoaMenuItemSel(appMenu, "Quit brain", "q", "terminate:")
 
   // terminal colour palette
   let pal = cocoaArray()
@@ -1513,7 +1706,10 @@ just run {
   }
   cocoaSetAssocKey(app, "stem.pal", pal)
 
-  let win = cocoaWindow(app, "brain — " + dir, 940, 640)
+  let win = cocoaWindow(app, "brain — " + dir, 1040, 720)
+  cocoaSetWindowMinSize(win, 720, 480)
+  cocoaTransparentTitlebar(win)
+  msg(win, "center")
   msg_1(win, "setAppearance:", msg_1(cls("NSAppearance"), "appearanceNamed:", nsString("NSAppearanceNameDarkAqua")))
 
   // top: tree + editor + tabs ; bottom: terminal
@@ -1521,9 +1717,16 @@ just run {
   let editor = cocoaScrollText(win, 240, 252, 700, 356)
   cocoaSetFont(editor, cocoaMonoFont(13))
   // dark theme
-  cocoaSetBg(editor, cocoaRGB(24, 43, 48))
-  cocoaSetTextColor(editor, cocoaRGB(212, 212, 212))
-  msg_1(editor, "setInsertionPointColor:", cocoaRGB(220, 220, 220))
+  cocoaSetBg(win, themeCanvas())
+  cocoaSetBg(table, themeSidebar())
+  msg_1(msg(table, "enclosingScrollView"), "setDrawsBackground:", 1)
+  cocoaSetBg(msg(table, "enclosingScrollView"), themeSidebar())
+  msg_d1(table, "setRowHeight:", 28)
+  msg_1(table, "setSelectionHighlightStyle:", 1)
+  msg_d2(editor, "setTextContainerInset:", 6, 6)
+  cocoaSetBg(editor, themeCanvas())
+  cocoaSetTextColor(editor, themeText())
+  msg_1(editor, "setInsertionPointColor:", themeAccent())
   msg_1(editor, "setAllowsUndo:", 1)
   msg_1(editor, "setUsesFindBar:", 1)
 
@@ -1533,7 +1736,7 @@ just run {
   let tmono = cocoaFontFamily(cocoaMonoFont(12), "JetBrainsMono Nerd Font Mono")
   cocoaSetFont(term, tmono)
   let tfg = cocoaColorNamed("whiteColor")
-  cocoaSetBg(term, cocoaColorNamed("blackColor"))
+  cocoaSetBg(term, cocoaRGB(16, 20, 28))
   cocoaSetTextColor(term, tfg)
   let kc = cocoaViewClassNew("BrainTermKeys")
   cocoaClassAddMethod(kc, "keyDown:", funcptr(onKey), "v@:@")
@@ -1556,6 +1759,14 @@ just run {
   cocoaClassAddMethod(dsc, "tableView:objectValueForTableColumn:row:", funcptr(dsValue), "@@:@@q")
   cocoaClassAddMethod(dsc, "tableViewSelectionDidChange:", funcptr(dsSelect), "v@:@")
   cocoaClassAddMethod(dsc, "textStorageDidProcessEditing:", funcptr(reHL), "v@:@")
+  cocoaClassAddMethod(dsc, "toolbarDefaultItemIdentifiers:", funcptr(toolbarIDs), "@@:@")
+  cocoaClassAddMethod(dsc, "toolbarAllowedItemIdentifiers:", funcptr(toolbarIDs), "@@:@")
+  cocoaClassAddMethod(dsc, "toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:", funcptr(toolbarItem), "@@:@@c")
+  cocoaClassAddMethod(dsc, "toolbarOpen:", funcptr(onOpen), "v@:@")
+  cocoaClassAddMethod(dsc, "toolbarSave:", funcptr(onSave), "v@:@")
+  cocoaClassAddMethod(dsc, "toolbarBuild:", funcptr(onBuild), "v@:@")
+  cocoaClassAddMethod(dsc, "toolbarRun:", funcptr(onRun), "v@:@")
+  cocoaClassAddMethod(dsc, "textViewDidChangeSelection:", funcptr(onEditorSelection), "v@:@")
   cocoaClassRegister(dsc)
   let ds = cocoaNew(dsc)
   cocoaSetAssocKey(app, "brain.ds", ds)
@@ -1565,6 +1776,12 @@ just run {
   cocoaSetDataSource(table, ds)
   msg_1(table, "setDelegate:", ds)
   cocoaTVSetStorageDelegate(editor, ds)
+  msg_1(editor, "setDelegate:", ds)
+  let toolbar = msg_1(msg(cls("NSToolbar"), "alloc"), "initWithIdentifier:", nsString("kcodeToolbar"))
+  msg_1(toolbar, "setDelegate:", ds)
+  msg_1(toolbar, "setDisplayMode:", 2)
+  msg_1(win, "setToolbar:", toolbar)
+  msg_1(win, "setToolbarStyle:", 3)
 
   cocoaSetAssocKey(app, "brain.editor", editor)
   cocoaSetAssocKey(app, "brain.dir", nsString(dir))
@@ -1572,6 +1789,8 @@ just run {
   cocoaSetAssocKey(app, "brain.tabbtns", cocoaArray())
   cocoaSetAssocKey(app, "brain.tabpaths", cocoaArray())
   cocoaSetAssocKey(app, "brain.tabtexts", cocoaArray())
+  installLayout(win, table, editor, term, kview)
+  installRuler(editor)
 
   let fileMenu = cocoaMenuAdd(bar, "File")
   cocoaMenuItem(fileMenu, "New Text File", "t", funcptr(onNewText))
@@ -1631,10 +1850,11 @@ just run {
   let runMenu = cocoaMenuAdd(bar, "Run")
   cocoaMenuItem(runMenu, "Run File", "r", funcptr(onRun))
 
-  cocoaTVSetString(editor, "// brain — click a file on the left; terminal below\n")
+  cocoaTVSetString(editor, "")
+  onNew(0, 0, 0)
   cocoaReload(table)
   cocoaShow(win, app)
-  cocoaMakeFirstResponder(win, kview)
+  cocoaMakeFirstResponder(win, editor)
   cocoaFinishLaunching(app)
 
   // manual loop: pump UI events + stream the pty into the terminal grid
@@ -1643,7 +1863,10 @@ just run {
   let pending = ""
   let i = 0
   while i < 2000000000 {
+    let framePool = msg(cls("NSAutoreleasePool"), "new")
     cocoaPumpEvents(app)
+    msg(app, "updateWindows")
+    msg_1(cocoaGetAssocKey(app, "brain.ruler"), "setNeedsDisplay:", 1)
     let chunk = fdRead(m, 4096)
     if len(chunk) > 0 {
       let buf = pending + chunk
@@ -1669,6 +1892,7 @@ just run {
         }
       } }
     }
+    msg(framePool, "drain")
     sleepUs(0, 8000)
     i = i + 1
   }

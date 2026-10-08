@@ -740,7 +740,7 @@ func _runBuild(e, alsoExecute) {
         e = kvSet(e, "buf", b)
     }
     let bin = "/tmp/_kcode_run_bin"
-    let buildOut = _shellCapture("kcc.sh " + path + " -o " + bin)
+    let buildOut = _shellCapture("kcc " + path + " -o " + bin)
     let title = "BUILD: " + path
     let body = buildOut
     if alsoExecute == 1 {

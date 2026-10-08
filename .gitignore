@@ -346,3 +346,7 @@ StyleCopReport.xml
 TestResult.xml
 UpgradeLog*.htm
 UpgradeLog*.XML
+
+# Objective K build output
+brain.app/
+dist/brain.app/
