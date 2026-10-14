@@ -976,12 +976,47 @@ func lineCommentPrefix(ext) {
   emit "//"
 }
 // word-boundary keyword colouring
-// Token scanners use UTF-8 bytes; AppKit text ranges use UTF-16 units.
+// Sparse UTF-8/UTF-16 offsets avoid rescanning every token's entire prefix.
+func prepareUTF8Offsets(src) {
+  let ends = cocoaArray()
+  let deltas = cocoaArray()
+  let i = 0
+  let delta = 0
+  let n = len(src)
+  while i < n {
+    let c = charCode(src[i])
+    let width = 1
+    let units = 1
+    if c >= 192 { width = 2 }
+    if c >= 224 { width = 3 }
+    if c >= 240 { width = 4  units = 2 }
+    if width > 1 {
+      delta = delta + width - units
+      cocoaArrayAdd(ends, cocoaNumber(i + width))
+      cocoaArrayAdd(deltas, cocoaNumber(delta))
+    }
+    i = i + width
+  }
+  cocoaSetAssocKey(appH(), "brain.utf8ends", ends)
+  cocoaSetAssocKey(appH(), "brain.utf8deltas", deltas)
+  emit "1"
+}
+func utf16Offset(byte) {
+  let ends = cocoaGetAssocKey(appH(), "brain.utf8ends")
+  let low = 0
+  let high = cocoaArrayCount(ends)
+  while low < high {
+    let mid = (low + high) / 2
+    if cocoaNumberVal(cocoaArrayGet(ends, mid)) <= byte { low = mid + 1 }
+    else { high = mid }
+  }
+  let delta = 0
+  if low > 0 { delta = cocoaNumberVal(cocoaArrayGet(cocoaGetAssocKey(appH(), "brain.utf8deltas"), low - 1)) }
+  emit byte - delta
+}
 func colorUTF8Range(ts, src, color, start, count) {
-  let prefix = nsString(substring(src, 0, start))
-  let token = nsString(substring(src, start, start + count))
-  let location = msg(prefix, "length")
-  let units = msg(token, "length")
+  let location = utf16Offset(start)
+  let units = utf16Offset(start + count) - location
   if location + units <= cocoaTSLength(ts) { cocoaTSColorRange(ts, color, location, units) }
   emit "1"
 }
@@ -1088,6 +1123,7 @@ func hlLineComment(ts, src, prefix, color) {
   emit "1"
 }
 func highlightLang(ts, src, ext) {
+  prepareUTF8Offsets(src)
   hlKeywords(ts, src, langKeywords(ext), cocoaColorNamed("systemPurpleColor"))
   hlNumbers(ts, src, cocoaColorNamed("systemOrangeColor"))
   hlDelim(ts, src, "\"", cocoaColorNamed("systemGreenColor"))
@@ -1095,18 +1131,20 @@ func highlightLang(ts, src, ext) {
   hlLineComment(ts, src, lineCommentPrefix(ext), cocoaColorNamed("systemGrayColor"))
   emit "1"
 }
-func reHL(self, cmd, notif) {
-  let ts = msg(notif, "object")
-  if cocoaTSEditedChars(ts) == 0 { emit "1" }
-  // paint base text light first; token colours overlay (removeAttribute would
-  // fall back to black on the dark bg).
+func applyHighlight(editor) {
+  let ts = msg(editor, "textStorage")
   cocoaTSColorRange(ts, themeText(), 0, cocoaTSLength(ts))
   let lang = cocoaGetAssocKey(appH(), "brain.lang")
   let ext = ""
   if lang != 0 { ext = msg(lang, "UTF8String") }
   let source = cocoaTSString(ts)
   if len(source) <= 262144 { highlightLang(ts, source, ext) }
+  updateLineCount(editor)
   refreshEditorChrome()
+  emit "1"
+}
+func onTextChanged(self, cmd, notification) {
+  if brainFlag("brain.switching", 0) == 0 { applyHighlight(cocoaGetAssocKey(appH(), "brain.editor")) }
   emit "1"
 }
 
@@ -1184,7 +1222,7 @@ func rebuildTabs() {
   let i = 0
   while i < n {
     let nm = baseName(msg(cocoaArrayGet(paths, i), "UTF8String"))
-    if indexOf(nm, "untitled-") == 0 { nm = "untitled" }
+    if cocoaNumberVal(cocoaGetAssocKey(cocoaArrayGet(cocoaGetAssocKey(app, "brain.tabundos"), i), "brain.untitled")) == 1 { nm = "untitled" }
     // tab width includes room for the ✕ on the right
     let w = 70 + len(nm) * 7 + 22
     if w > 220 { w = 220 }
@@ -1285,6 +1323,7 @@ func selectTab(idx) {
   let clip = msg(sv, "contentView")
   msg_d2(clip, "scrollToPoint:", cocoaNumberVal(cocoaGetAssocKey(manager, "brain.scrollx")), cocoaNumberVal(cocoaGetAssocKey(manager, "brain.scrolly")))
   msg_1(sv, "reflectScrolledClipView:", clip)
+  applyHighlight(editor)
   cocoaSetAssocKey(app, "brain.curpath", cocoaArrayGet(paths, idx))
   cocoaSetAssocKey(app, "brain.displayedpath", cocoaArrayGet(paths, idx))
   msg(manager, "enableUndoRegistration")
@@ -1333,7 +1372,17 @@ func rebuildRecentMenu(menu) {
 }
 func dirOf(p) { let n = len(p)  let i = n - 1  while i >= 0 { if p[i] == "/" { emit substring(p, 0, i) }  i = i - 1 }  emit p }
 
+func canonicalPath(path) { emit msg(msg(nsString(path), "stringByResolvingSymlinksInPath"), "UTF8String") }
+func readableText(text) {
+  if text == 0 { emit 0 }
+  let nul = msg_2(cls("NSCharacterSet"), "characterSetWithRange:", 0, 1)
+  let location = msg_1(text, "rangeOfCharacterFromSet:", nul)
+  if location < msg(text, "length") { emit 0 }
+  emit 1
+}
 func openTab(path) {
+  restoreAccess(path)
+  path = canonicalPath(path)
   // Copy borrowed UTF8String buffers before recent-menu mutation can release them.
   let pathOwner = nsString(path)
   path = msg(pathOwner, "UTF8String")
@@ -1350,9 +1399,9 @@ func openTab(path) {
   if found < 0 {
     cocoaArrayAdd(paths, nsString(path))
     let contents = msg_3(cls("NSString"), "stringWithContentsOfFile:encoding:error:", nsString(path), 4, 0)
-    if contents == 0 {
+    if readableText(contents) == 0 {
       cocoaArrayRemove(paths, count)
-      cocoaAlert("Could not open", "The file could not be read as UTF-8 text: " + path)
+      brainAlert("Could not open", "The file could not be read as UTF-8 text: " + path)
       emit "1"
     }
     cocoaArrayAdd(texts, contents)
@@ -1369,13 +1418,161 @@ func onTabChange(self, cmd, sender) {
   selectTab(cocoaSegSelected(sender))
 }
 
-func onNew(self, cmd, sender) { newUntitled(".k") }
+func onNew(self, cmd, sender) { newUntitled(".txt") }
 func onClose(self, cmd, sender) { closeTab(curTabIdx()) }
+
+// Modal prompts must outrank the editor and the floating search picker.
+// Keep the active prompt available to activation callbacks while runModal owns
+// the event loop; the outer application loop cannot repair ordering then.
+func raiseActivePrompt() {
+  let app = appH()
+  let window = cocoaGetAssocKey(app, "brain.promptwindow")
+  if window == 0 { window = msg(app, "modalWindow") }
+  if window != 0 && msg(window, "isVisible") == 1 {
+    msg_1(window, "setCollectionBehavior:", 257) // CanJoinAllSpaces | FullScreenAuxiliary
+    msg_1(window, "setLevel:", 8) // NSModalPanelWindowLevel
+    msg_1(window, "makeKeyAndOrderFront:", 0)
+    msg(window, "orderFrontRegardless")
+  }
+  emit "1"
+}
+func onPromptActivation(self, cmd, notification) { raiseActivePrompt() }
+func beginPrompt(window) {
+  let app = appH()
+  msg_1(cocoaGetAssocKey(app, "brain.picker.window"), "orderOut:", 0)
+  msg_1(window, "setCollectionBehavior:", 257)
+  msg_1(window, "setLevel:", 8)
+  cocoaSetAssocKey(app, "brain.promptwindow", window)
+  msg_1(app, "activateIgnoringOtherApps:", 1)
+  emit "1"
+}
+func endPrompt(window) {
+  cocoaSetAssocKey(appH(), "brain.promptwindow", 0)
+  msg_1(window, "orderOut:", 0)
+  msg_1(window, "setLevel:", 0)
+  let owner = cocoaGetAssocKey(appH(), "brain.win")
+  if msg(owner, "isVisible") == 1 {
+    msg_1(owner, "makeKeyAndOrderFront:", 0)
+    cocoaMakeFirstResponder(owner, cocoaGetAssocKey(appH(), "brain.editor"))
+  }
+  emit "1"
+}
+func promptButton(self, cmd, sender) {
+  let window = cocoaGetAssocKey(sender, "brain.promptowner")
+  cocoaSetAssocKey(window, "brain.response", cocoaGetAssocKey(sender, "brain.response"))
+  emit "1"
+}
+func promptMinimize(self, cmd, sender) {
+  // Hide both windows together; leaving only the blocked owner is misleading.
+  msg_1(appH(), "hide:", sender)
+  emit "1"
+}
+func promptWindowClose(self, cmd, window) {
+  cocoaSetAssocKey(window, "brain.response", cocoaGetAssocKey(window, "brain.cancelresponse"))
+  emit 0
+}
+func runBrainAlert(alert) {
+  // Avoid NSAlert's blank backing view on the current objk/manual-loop path.
+  // Plain AppKit controls use the same drawing path as the working editor UI.
+  msg(alert, "layout")
+  let choices = msg(alert, "buttons")
+  if cocoaArrayCount(choices) == 0 { msg_1(alert, "addButtonWithTitle:", nsString("OK"))  choices = msg(alert, "buttons") }
+  let count = cocoaArrayCount(choices)
+  let width = 480
+  if count > 3 { width = count * 142 + 36 }
+  let window = msg_rect(msg(cls("NSPanel"), "alloc"), "initWithContentRect:styleMask:backing:defer:", 0, 0, width, 240, 15, 2, 0)
+  msg_1(window, "setReleasedWhenClosed:", 0)
+  cocoaSetWindowMinSize(window, width, 268)
+  msg_1(window, "setTitle:", nsString("brain"))
+  msg_1(window, "setBackgroundColor:", themeSidebar())
+  msg_1(window, "setAppearance:", msg_1(cls("NSAppearance"), "appearanceNamed:", nsString("NSAppearanceNameDarkAqua")))
+  let heading = cocoaPlainLabel(window, msg(msg(alert, "messageText"), "UTF8String"), 20, 162, width - 40, 56)
+  cocoaSetFont(heading, msg_d1(cls("NSFont"), "boldSystemFontOfSize:", 16))
+  cocoaSetTextColor(heading, themeText())
+  msg_1(msg(heading, "cell"), "setWraps:", 1)
+  msg_1(heading, "setAutoresizingMask:", 10)
+  let detail = cocoaPlainLabel(window, msg(msg(alert, "informativeText"), "UTF8String"), 20, 66, width - 40, 90)
+  cocoaSetFont(detail, msg_d1(cls("NSFont"), "systemFontOfSize:", 13))
+  cocoaSetTextColor(detail, themeText())
+  msg_1(msg(detail, "cell"), "setWraps:", 1)
+  msg_1(detail, "setAutoresizingMask:", 10)
+  let buttons = cocoaArray()
+  let cancel = 0 - 1
+  let i = 0
+  while i < count {
+    let title = msg(cocoaArrayGet(choices, i), "title")
+    let button = cocoaButton(window, msg(title, "UTF8String"), 18 + i * 148, 18, 140, 32)
+    msg_1(button, "setBezelStyle:", 1)
+    msg_1(button, "setAutoresizingMask:", 36)
+    cocoaSetAssocKey(button, "brain.promptowner", window)
+    cocoaSetAssocKey(button, "brain.response", cocoaNumber(1000 + i))
+    cocoaOnClickKeyed(button, "prompt-response-" + i, funcptr(promptButton))
+    if i == 0 { msg_1(button, "setKeyEquivalent:", nsString("\r"))  msg_1(window, "setDefaultButtonCell:", msg(button, "cell")) }
+    if msg_1(title, "isEqualToString:", nsString("Cancel")) == 1 || msg_1(title, "isEqualToString:", nsString("Later")) == 1 { cancel = i }
+    cocoaArrayAdd(buttons, button)
+    i = i + 1
+  }
+  if cancel < 0 { cancel = 0 }
+  msg_1(cocoaArrayGet(buttons, cancel), "setKeyEquivalent:", nsString(fromCharCode(27)))
+  cocoaSetAssocKey(window, "brain.cancelresponse", cocoaNumber(1000 + cancel))
+  let c = objc_lookUpClass("KcodePromptDelegate")
+  if c == 0 {
+    c = cocoaClassNew("KcodePromptDelegate")
+    cocoaClassAddMethod(c, "windowShouldClose:", funcptr(promptWindowClose), "c@:@")
+    cocoaClassAddMethod(c, "promptMinimize:", funcptr(promptMinimize), "v@:@")
+    cocoaClassRegister(c)
+  }
+  let delegate = cocoaNew(c)
+  msg_1(window, "setDelegate:", delegate)
+  let minimize = msg_1(window, "standardWindowButton:", 1)
+  msg_1(minimize, "setTarget:", delegate)
+  msg_1(minimize, "setAction:", sel("promptMinimize:"))
+  cocoaSetAssocKey(window, "brain.delegate", delegate)
+  msg(delegate, "release")
+  cocoaSetAssocKey(window, "brain.response", 0)
+  msg(window, "center")
+  beginPrompt(window)
+  let app = appH()
+  let session = msg_1(app, "beginModalSessionForWindow:", window)
+  raiseActivePrompt()
+  while cocoaGetAssocKey(window, "brain.response") == 0 {
+    let state = msg_1(app, "runModalSession:", session)
+    if state != 0 - 1002 { cocoaSetAssocKey(window, "brain.response", cocoaGetAssocKey(window, "brain.cancelresponse")) }
+    msg(app, "updateWindows")
+    msg(window, "displayIfNeeded")
+    sleepUs(0, 8000)
+  }
+  let response = cocoaNumberVal(cocoaGetAssocKey(window, "brain.response"))
+  msg_1(app, "endModalSession:", session)
+  endPrompt(window)
+  i = 0
+  while i < cocoaArrayCount(buttons) {
+    cocoaSetAssocKey(cocoaArrayGet(buttons, i), "brain.promptowner", 0)
+    i = i + 1
+  }
+  msg_1(window, "setDelegate:", 0)
+  msg(window, "release")
+  emit response
+}
+func brainAlert(title, message) {
+  let alert = allocInit("NSAlert")
+  msg_1(alert, "setMessageText:", nsString(title))
+  msg_1(alert, "setInformativeText:", nsString(message))
+  runBrainAlert(alert)
+  msg(alert, "release")
+  emit "1"
+}
+func runBrainPanel(panel) {
+  beginPrompt(panel)
+  let response = msg(panel, "runModal")
+  endPrompt(panel)
+  emit response
+}
 
 // Atomic UTF-8 writes keep the original intact when a save fails.
 func writeDocument(path, text) {
   let ok = msg_4(text, "writeToFile:atomically:encoding:error:", nsString(path), 1, 4, 0)
-  if ok == 0 { cocoaAlert("Could not save", "The document could not be written to " + path + ". Check access permissions and available disk space.") }
+  if ok == 0 { brainAlert("Could not save", "The document could not be written to " + path + ". Check access permissions and available disk space.") }
   emit ok
 }
 func saveTab(idx) {
@@ -1385,13 +1582,43 @@ func saveTab(idx) {
   let paths = cocoaGetAssocKey(app, "brain.tabpaths")
   let pathOwner = msg(cocoaArrayGet(paths, idx), "copy")
   let path = msg(pathOwner, "UTF8String")
-  if indexOf(baseName(path), "untitled-") == 0 {
+  let manager = cocoaArrayGet(cocoaGetAssocKey(app, "brain.tabundos"), idx)
+  let untitled = cocoaNumberVal(cocoaGetAssocKey(manager, "brain.untitled"))
+  if untitled == 1 {
     path = chooseSave()
     if len(path) == 0 { msg(pathOwner, "release")  emit 0 }
+    path = canonicalPath(path)
+    let i = 0
+    while i < cocoaArrayCount(paths) {
+      if i != idx { if msg_1(cocoaArrayGet(paths, i), "isEqualToString:", nsString(path)) == 1 {
+        brainAlert("File already open", "Close the other tab before replacing this document.")
+        msg(pathOwner, "release")
+        emit 0
+      } }
+      i = i + 1
+    }
   }
   let text = cocoaArrayGet(cocoaGetAssocKey(app, "brain.tabtexts"), idx)
+  if untitled == 0 {
+    let disk = msg_3(cls("NSString"), "stringWithContentsOfFile:encoding:error:", nsString(path), 4, 0)
+    let saved = cocoaArrayGet(cocoaGetAssocKey(app, "brain.savedtexts"), idx)
+    let changed = 0
+    if disk != 0 { changed = 1 - msg_1(disk, "isEqualToString:", saved) }
+    else { changed = msg_1(msg(cls("NSFileManager"), "defaultManager"), "fileExistsAtPath:", nsString(path)) }
+    if changed == 1 {
+      let alert = allocInit("NSAlert")
+      msg_1(alert, "setMessageText:", nsString("File changed on disk"))
+      msg_1(alert, "setInformativeText:", nsString("Another program changed this file. Overwrite those changes with this document?"))
+      msg_1(alert, "addButtonWithTitle:", nsString("Cancel"))
+      msg_1(alert, "addButtonWithTitle:", nsString("Overwrite"))
+      let response = runBrainAlert(alert)
+      msg(alert, "release")
+      if response != 1001 { cocoaSetAssocKey(app, "brain.autosave", cocoaNumber(0))  msg(pathOwner, "release")  emit 0 }
+    }
+  }
   if writeDocument(path, text) == 0 { msg(pathOwner, "release")  emit 0 }
   cocoaArraySet(paths, idx, nsString(path))
+  cocoaSetAssocKey(cocoaArrayGet(cocoaGetAssocKey(app, "brain.tabundos"), idx), "brain.untitled", cocoaNumber(0))
   cocoaArraySet(cocoaGetAssocKey(app, "brain.savedtexts"), idx, text)
   if idx == curTabIdx() {
     cocoaSetAssocKey(app, "brain.curpath", cocoaArrayGet(paths, idx))
@@ -1417,7 +1644,7 @@ func confirmTab(idx) {
   msg_1(alert, "addButtonWithTitle:", nsString("Save"))
   msg_1(alert, "addButtonWithTitle:", nsString("Cancel"))
   msg_1(alert, "addButtonWithTitle:", nsString("Discard"))
-  let response = msg(alert, "runModal")
+  let response = runBrainAlert(alert)
   msg(alert, "release")
   if response == 1000 { emit saveTab(idx) }
   if response == 1002 { emit 1 }
@@ -1433,7 +1660,9 @@ func confirmAll() {
   emit 1
 }
 func shouldTerminate(self, cmd, sender) {
+  if cocoaGetAssocKey(appH(), "brain.promptwindow") != 0 { raiseActivePrompt()  emit 0 }
   if confirmAll() == 0 { emit 0 }
+  recoveryClear()
   onStopTask(0, 0, 0)
   let pty = cocoaGetAssocKey(appH(), "brain.pty")
   if pty != 0 {
@@ -1441,8 +1670,9 @@ func shouldTerminate(self, cmd, sender) {
     if fd >= 0 {
       let quit = fromCharCode(3) + "exit\n"
       fdWrite(fd, quit, len(quit))
-      let handle = msg_2(cls("NSFileHandle"), "fileHandleWithFileDescriptor:closeOnDealloc:", fd, 0)
+      let handle = msg_2(msg(cls("NSFileHandle"), "alloc"), "initWithFileDescriptor:closeOnDealloc:", fd, 0)
       msg(handle, "closeFile")
+      msg(handle, "release")
     }
   }
   let scopes = cocoaGetAssocKey(appH(), "brain.scopes")
@@ -1450,7 +1680,25 @@ func shouldTerminate(self, cmd, sender) {
   while i < cocoaArrayCount(scopes) { msg(cocoaArrayGet(scopes, i), "stopAccessingSecurityScopedResource")  i = i + 1 }
   emit 1
 }
-func shouldCloseWindow(self, cmd, sender) { emit confirmAll() }
+func shouldCloseWindow(self, cmd, sender) {
+  if cocoaGetAssocKey(appH(), "brain.promptwindow") != 0 { raiseActivePrompt()  emit 0 }
+  if confirmAll() == 0 { emit 0 }
+  let app = appH()
+  cocoaSetAssocKey(app, "brain.switching", cocoaNumber(1))
+  cocoaSetAssocKey(app, "brain.curtab", cocoaNumber(0 - 1))
+  cocoaSetAssocKey(app, "brain.displayedpath", 0)
+  cocoaSetAssocKey(app, "brain.curpath", 0)
+  cocoaSetAssocKey(app, "brain.tabpaths", cocoaArray())
+  cocoaSetAssocKey(app, "brain.tabtexts", cocoaArray())
+  cocoaSetAssocKey(app, "brain.savedtexts", cocoaArray())
+  cocoaSetAssocKey(app, "brain.tabundos", cocoaArray())
+  cocoaTVSetString(cocoaGetAssocKey(app, "brain.editor"), "")
+  msg_1(cocoaGetAssocKey(app, "brain.editor"), "setEditable:", 0)
+  cocoaSetAssocKey(app, "brain.switching", cocoaNumber(0))
+  rebuildTabs()
+  recoveryClear()
+  emit 1
+}
 
 // ── menu actions ──────────────────────────────────────────────────────
 func startTask(executable, arguments) {
@@ -1465,7 +1713,7 @@ func startTask(executable, arguments) {
   if directory != 0 { msg_1(task, "setCurrentDirectoryURL:", msg_1(cls("NSURL"), "fileURLWithPath:", directory)) }
   if msg_1(task, "launchAndReturnError:", 0) == 0 {
     msg(task, "release")
-    cocoaAlert("Could not launch", "Check that the executable exists and can run: " + executable)
+    brainAlert("Could not launch", "Check that the executable exists and can run: " + executable)
     emit 0
   }
   let handle = msg(pipe, "fileHandleForReading")
@@ -1480,17 +1728,17 @@ func startTask(executable, arguments) {
 func queueBuild(run) {
   if storeEdition() == 1 { emit "1" }
   let app = appH()
-  if cocoaGetAssocKey(app, "brain.jobtask") != 0 { cocoaAlert("Task running", "Stop the current build or run before starting another.")  emit "1" }
+  if cocoaGetAssocKey(app, "brain.jobtask") != 0 { brainAlert("Task running", "Stop the current build or run before starting another.")  emit "1" }
   let idx = curTabIdx()
-  if idx < 0 { cocoaAlert("Build", "Open a Krypton source file first.")  emit "1" }
+  if idx < 0 { brainAlert("Build", "Open a Krypton source file first.")  emit "1" }
   if saveTab(idx) == 0 { emit "1" }
   let path = msg(cocoaGetAssocKey(app, "brain.curpath"), "UTF8String")
   let ext = extOf(path)
-  if ext != "k" && ext != "ks" { cocoaAlert("Build", "Choose a .k or .ks source file.")  emit "1" }
+  if ext != "k" && ext != "ks" { brainAlert("Build", "Choose a .k or .ks source file.")  emit "1" }
   let fm = msg(cls("NSFileManager"), "defaultManager")
   let compiler = "/usr/local/bin/kcc"
   if msg_1(fm, "isExecutableFileAtPath:", nsString(compiler)) == 0 { compiler = "/opt/homebrew/bin/kcc" }
-  if msg_1(fm, "isExecutableFileAtPath:", nsString(compiler)) == 0 { cocoaAlert("Compiler missing", "Install the Krypton toolchain to use Build and Run.")  emit "1" }
+  if msg_1(fm, "isExecutableFileAtPath:", nsString(compiler)) == 0 { brainAlert("Compiler missing", "Install the Krypton toolchain to use Build and Run.")  emit "1" }
   let uuid = msg(msg(cls("NSUUID"), "UUID"), "UUIDString")
   let output = "/tmp/brain-job-" + msg(uuid, "UTF8String")
   let args = cocoaArray()
@@ -1533,7 +1781,7 @@ func pollTask() {
   }
   let message = "Exit status: " + status + "\n" + msg(output, "UTF8String")
   // Report output after the task finishes; editor stays responsive while it runs.
-  cocoaAlert("Build / Run", message)
+  brainAlert("Build / Run", message)
   msg(output, "release")
   msg_2(msg(cls("NSFileManager"), "defaultManager"), "removeItemAtPath:error:", executable, 0)
   emit "1"
@@ -1547,64 +1795,269 @@ func onRun(self, cmd, sender) { queueBuild(1) }
 func onOpen(self, cmd, sender) { let f = chooseFile()  if len(f) > 0 { openTab(f) }  emit "1" }
 func onSave(self, cmd, sender) { saveTab(curTabIdx())  emit "1" }
 
-// ── integrated console (run shell commands, see output) ────────────────
-func onCmd(self, cmd, sender) {
-  let app = appH()
-  let line = msg(msg(sender, "stringValue"), "UTF8String")
-  let console = cocoaGetAssocKey(app, "brain.console")
-  let out = exec("cd " + projDir() + " && " + line + " 2>&1")
-  cocoaTVSetString(console, cocoaTVGetString(console) + "$ " + line + "\n" + out)
-  msg_1(sender, "setStringValue:", nsString(""))
-  msg_1(console, "scrollToEndOfDocument:", 0)
+// ── Explorer: lazy, expandable project tree ──────────────────────────────
+func explorerNode(path, name, directory) {
+  let node = allocInit("NSMutableDictionary")
+  msg_2(node, "setObject:forKey:", nsString(path), nsString("path"))
+  msg_2(node, "setObject:forKey:", nsString(name), nsString("name"))
+  msg_2(node, "setObject:forKey:", cocoaNumber(directory), nsString("directory"))
+  emit msg(node, "autorelease")
 }
-
-// ── file tree ──────────────────────────────────────────────────────────
-func dsRows(self, cmd, tv) { emit cocoaArrayCount(cocoaGetAssocKey(self, "files")) }
-func dsValue(self, cmd, tv, col, row) { emit cocoaArrayGet(cocoaGetAssocKey(self, "files"), row) }
-// fill a tree array: ".." then `ls -1p` (dirs end with '/').
-func fillFiles(files, d) {
-  cocoaArrayAdd(files, nsString(".."))
+func explorerChildren(node) {
+  let children = msg_1(node, "objectForKey:", nsString("children"))
+  if children != 0 { emit children }
+  let dirs = cocoaArray()
+  let files = cocoaArray()
+  let path = msg(msg_1(node, "objectForKey:", nsString("path")), "UTF8String")
   let fm = msg(cls("NSFileManager"), "defaultManager")
-  let entries = msg_2(fm, "contentsOfDirectoryAtPath:error:", nsString(d), 0)
-  let sorted = msg_1(entries, "sortedArrayUsingSelector:", sel("localizedStandardCompare:"))
+  let names = msg_2(fm, "contentsOfDirectoryAtPath:error:", nsString(path), 0)
+  let sorted = msg_1(names, "sortedArrayUsingSelector:", sel("localizedStandardCompare:"))
   let i = 0
   while i < cocoaArrayCount(sorted) {
     let name = msg(cocoaArrayGet(sorted, i), "UTF8String")
-    if indexOf(name, ".") != 0 {
-      let attrs = msg_2(fm, "attributesOfItemAtPath:error:", nsString(d + "/" + name), 0)
+    if name != ".git" && name != ".DS_Store" {
+      let full = path + "/" + name
+      let attrs = msg_2(fm, "attributesOfItemAtPath:error:", nsString(full), 0)
       let kind = msg_1(attrs, "objectForKey:", nsString("NSFileType"))
-      if msg_1(kind, "isEqualToString:", nsString("NSFileTypeDirectory")) == 1 { name = name + "/" }
-      cocoaArrayAdd(files, nsString(name))
+      let directory = msg_1(kind, "isEqualToString:", nsString("NSFileTypeDirectory"))
+      let item = explorerNode(full, name, directory)
+      if directory == 1 { cocoaArrayAdd(dirs, item) }
+      else { cocoaArrayAdd(files, item) }
     }
     i = i + 1
   }
-  emit "1"
+  children = cocoaArray()
+  i = 0
+  while i < cocoaArrayCount(dirs) { cocoaArrayAdd(children, cocoaArrayGet(dirs, i))  i = i + 1 }
+  i = 0
+  while i < cocoaArrayCount(files) { cocoaArrayAdd(children, cocoaArrayGet(files, i))  i = i + 1 }
+  msg_2(node, "setObject:forKey:", children, nsString("children"))
+  emit children
 }
-func treeCell(self, cmd, table, cell, column, row) {
-  let name = msg(cocoaArrayGet(cocoaGetAssocKey(self, "files"), row), "UTF8String")
+func outlineChildren(self, cmd, outline, item) {
+  if item == 0 { emit brainFlag("brain.workspace", 1) }
+  if cocoaNumberVal(msg_1(item, "objectForKey:", nsString("directory"))) == 0 { emit 0 }
+  emit cocoaArrayCount(explorerChildren(item))
+}
+func outlineChild(self, cmd, outline, index, item) {
+  if item == 0 { emit cocoaGetAssocKey(self, "root") }
+  emit cocoaArrayGet(explorerChildren(item), index)
+}
+func outlineExpandable(self, cmd, outline, item) { emit cocoaNumberVal(msg_1(item, "objectForKey:", nsString("directory"))) }
+func outlineValue(self, cmd, outline, column, item) { emit msg_1(item, "objectForKey:", nsString("name")) }
+func outlineCell(self, cmd, outline, cell, column, item) {
+  let name = msg_1(item, "objectForKey:", nsString("name"))
   let image = "NSMultipleDocuments"
-  if substring(name, len(name) - 1, len(name)) == "/" { image = "NSFolder" }
+  if cocoaNumberVal(msg_1(item, "objectForKey:", nsString("directory"))) == 1 { image = "NSFolder" }
   msg_1(cell, "setLeaf:", 1)
   let icon = msg(msg_1(cls("NSImage"), "imageNamed:", nsString(image)), "copy")
   msg_d2(icon, "setSize:", 16, 16)
   msg_1(cell, "setImage:", icon)
   msg(icon, "release")
-  msg_1(cell, "setFont:", msg_d1(cls("NSFont"), "systemFontOfSize:", 13))
-  let attrs = cocoaTextAttrs(msg_d1(cls("NSFont"), "systemFontOfSize:", 13), themeText())
-  let title = msg_2(msg(cls("NSAttributedString"), "alloc"), "initWithString:attributes:", nsString(name), attrs)
+  let font = msg_d1(cls("NSFont"), "systemFontOfSize:", 13)
+  msg_1(cell, "setFont:", font)
+  let attrs = cocoaTextAttrs(font, themeText())
+  let title = msg_2(msg(cls("NSAttributedString"), "alloc"), "initWithString:attributes:", name, attrs)
   msg_1(cell, "setAttributedStringValue:", title)
+  msg(title, "release")
   emit "1"
 }
-func dsSelect(self, cmd, notif) {
-  let row = msg(msg(notif, "object"), "selectedRow")
+func outlineSelect(self, cmd, notification) {
+  let outline = msg(notification, "object")
+  let row = msg(outline, "selectedRow")
   if row < 0 { emit "1" }
-  let fname = msg(cocoaArrayGet(cocoaGetAssocKey(self, "files"), row), "UTF8String")
-  let dir = msg(cocoaGetAssocKey(self, "dir"), "UTF8String")
-  if fname == ".." { loadFolder(dirOf(dir))  emit "1" }
-  let last = substring(fname, len(fname) - 1, len(fname))
-  if last == "/" { loadFolder(dir + "/" + substring(fname, 0, len(fname) - 1))  emit "1" }
-  openTab(dir + "/" + fname)
+  let item = msg_1(outline, "itemAtRow:", row)
+  if cocoaNumberVal(msg_1(item, "objectForKey:", nsString("directory"))) == 0 { openTab(msg(msg_1(item, "objectForKey:", nsString("path")), "UTF8String")) }
+  emit "1"
 }
+func explorerView(win) {
+  let scroll = msg_frame(msg(cls("NSScrollView"), "alloc"), "initWithFrame:", 0, 252, 240, 388)
+  msg_1(scroll, "setHasVerticalScroller:", 1)
+  msg_1(scroll, "setBorderType:", 0)
+  let outline = msg_frame(msg(cls("NSOutlineView"), "alloc"), "initWithFrame:", 0, 0, 240, 388)
+  msg_1(outline, "setFocusRingType:", 1)
+  msg_d1(outline, "setIndentationPerLevel:", 14)
+  let column = msg_1(msg(cls("NSTableColumn"), "alloc"), "initWithIdentifier:", nsString("explorer"))
+  msg_d1(column, "setWidth:", 240)
+  msg_1(outline, "addTableColumn:", column)
+  msg_1(outline, "setOutlineTableColumn:", column)
+  msg_1(scroll, "setDocumentView:", outline)
+  msg_1(msg(win, "contentView"), "addSubview:", scroll)
+  emit outline
+}
+
+// Searchable file and command picker. Results keep their own immutable strings.
+func pickerRows(self, cmd, table) { emit cocoaArrayCount(cocoaGetAssocKey(appH(), "brain.picker.results")) }
+func pickerValue(self, cmd, table, column, row) { emit cocoaArrayGet(cocoaGetAssocKey(appH(), "brain.picker.results"), row) }
+func pickerFilter() {
+  let app = appH()
+  let query = msg(cocoaGetAssocKey(app, "brain.picker.input"), "stringValue")
+  let source = cocoaGetAssocKey(app, "brain.picker.source")
+  let results = cocoaArray()
+  let i = 0
+  while i < cocoaArrayCount(source) {
+    let item = cocoaArrayGet(source, i)
+    if msg(query, "length") == 0 || msg_1(item, "localizedCaseInsensitiveContainsString:", query) == 1 { cocoaArrayAdd(results, item) }
+    i = i + 1
+  }
+  cocoaSetAssocKey(app, "brain.picker.results", results)
+  let table = cocoaGetAssocKey(app, "brain.picker.table")
+  cocoaReload(table)
+  if cocoaArrayCount(results) > 0 { msg_2(table, "selectRowIndexes:byExtendingSelection:", msg_1(cls("NSIndexSet"), "indexSetWithIndex:", 0), 0) }
+  let detail = "Enter to open · ↑/↓ to select · Esc to close"
+  if brainFlag("brain.picker.mode", 0) == 1 { detail = "Enter to run command · ↑/↓ to select · Esc to close" }
+  if cocoaArrayCount(results) == 0 { detail = "No results" }
+  if brainFlag("brain.picker.mode", 0) == 0 && brainFlag("brain.workspace", 1) == 0 { detail = "Open a folder to search project files" }
+  if brainFlag("brain.picker.limited", 0) == 1 { detail = detail + " · First 20,000 project entries indexed" }
+  msg_1(cocoaGetAssocKey(app, "brain.picker.detail"), "setStringValue:", nsString(detail))
+  emit "1"
+}
+func pickerChanged(self, cmd, notification) { pickerFilter() }
+func pickerClose() {
+  msg_1(cocoaGetAssocKey(appH(), "brain.picker.window"), "orderOut:", 0)
+  let win = cocoaGetAssocKey(appH(), "brain.win")
+  msg_1(win, "makeKeyAndOrderFront:", 0)
+  cocoaMakeFirstResponder(win, cocoaGetAssocKey(appH(), "brain.editor"))
+  emit "1"
+}
+func pickerExecute(self, cmd, sender) {
+  let app = appH()
+  let results = cocoaGetAssocKey(app, "brain.picker.results")
+  let row = msg(cocoaGetAssocKey(app, "brain.picker.table"), "selectedRow")
+  if row < 0 || row >= cocoaArrayCount(results) { emit "1" }
+  let owner = msg(cocoaArrayGet(results, row), "copy")
+  let name = msg(owner, "UTF8String")
+  pickerClose()
+  if brainFlag("brain.picker.mode", 0) == 0 {
+    let root = msg(cocoaGetAssocKey(app, "brain.dir"), "UTF8String")
+    openTab(root + "/" + name)
+  } else {
+    if name == "File: New Text File" { onNew(0, 0, 0) }
+    if name == "File: Open File" { onOpen(0, 0, 0) }
+    if name == "File: Open Folder" { onOpenFolder(0, 0, 0) }
+    if name == "File: Save" { onSave(0, 0, 0) }
+    if name == "File: Save As" { onSaveAs(0, 0, 0) }
+    if name == "File: Save All" { onSaveAll(0, 0, 0) }
+    if name == "File: Revert File" { onRevert(0, 0, 0) }
+    if name == "File: Close Editor" { onClose(0, 0, 0) }
+    if name == "View: Toggle Sidebar" { onToggleSidebar(0, 0, 0) }
+    if name == "View: Toggle Terminal" { onToggleTerminal(0, 0, 0) }
+    if name == "View: Zoom In" { onZoomIn(0, 0, 0) }
+    if name == "View: Zoom Out" { onZoomOut(0, 0, 0) }
+    if name == "View: Reset Zoom" { onZoomReset(0, 0, 0) }
+    if name == "Go: Quick Open" { onQuickOpen(0, 0, 0) }
+    if name == "Run: Build File" { onBuild(0, 0, 0) }
+    if name == "Run: Run File" { onRun(0, 0, 0) }
+    if name == "Run: Stop" { onStopTask(0, 0, 0) }
+  }
+  msg(owner, "release")
+  emit "1"
+}
+func pickerSelectorEquals(command, name) {
+  let value = msg_1(cls("NSValue"), "valueWithPointer:", command)
+  emit msg_1(value, "isEqual:", msg_1(cls("NSValue"), "valueWithPointer:", sel(name)))
+}
+func pickerCommand(self, cmd, control, textView, command) {
+  if pickerSelectorEquals(command, "cancelOperation:") == 1 { pickerClose()  emit 1 }
+  if pickerSelectorEquals(command, "insertNewline:") == 1 { pickerExecute(0, 0, 0)  emit 1 }
+  let delta = 0
+  if pickerSelectorEquals(command, "moveDown:") == 1 { delta = 1 }
+  if pickerSelectorEquals(command, "moveUp:") == 1 { delta = 0 - 1 }
+  if delta != 0 {
+    let table = cocoaGetAssocKey(appH(), "brain.picker.table")
+    let count = cocoaArrayCount(cocoaGetAssocKey(appH(), "brain.picker.results"))
+    if count > 0 {
+      let row = msg(table, "selectedRow") + delta
+      if row < 0 { row = 0 }
+      if row >= count { row = count - 1 }
+      msg_2(table, "selectRowIndexes:byExtendingSelection:", msg_1(cls("NSIndexSet"), "indexSetWithIndex:", row), 0)
+      msg_1(table, "scrollRowToVisible:", row)
+    }
+    emit 1
+  }
+  emit 0
+}
+func pickerInit() {
+  let app = appH()
+  if cocoaGetAssocKey(app, "brain.picker.window") != 0 { emit "1" }
+  let panel = msg_rect(msg(cls("NSPanel"), "alloc"), "initWithContentRect:styleMask:backing:defer:", 0, 0, 620, 390, 3, 2, 0)
+  msg_1(panel, "setReleasedWhenClosed:", 0)
+  msg_1(panel, "setBackgroundColor:", themeSidebar())
+  msg_1(panel, "setCollectionBehavior:", 257)
+  msg_1(panel, "setLevel:", 3)
+  let input = cocoaTextField(panel, 16, 342, 588, 30)
+  cocoaSetFont(input, msg_d1(cls("NSFont"), "systemFontOfSize:", 15))
+  cocoaSetBg(input, themeCanvas())
+  cocoaSetTextColor(input, themeText())
+  let table = cocoaTable(panel, 16, 42, 588, 288)
+  msg_1(table, "setHeaderView:", 0)
+  msg_d1(table, "setRowHeight:", 26)
+  msg_1(table, "setBackgroundColor:", themeSidebar())
+  let detail = cocoaPlainLabel(panel, "", 16, 12, 588, 20)
+  cocoaSetTextColor(detail, cocoaRGB(164, 166, 174))
+  let c = cocoaClassNew("KcodePickerDelegate")
+  cocoaClassAddMethod(c, "numberOfRowsInTableView:", funcptr(pickerRows), "q@:@")
+  cocoaClassAddMethod(c, "tableView:objectValueForTableColumn:row:", funcptr(pickerValue), "@@:@@q")
+  cocoaClassAddMethod(c, "controlTextDidChange:", funcptr(pickerChanged), "v@:@")
+  cocoaClassAddMethod(c, "control:textView:doCommandBySelector:", funcptr(pickerCommand), "c@:@@:")
+  cocoaClassAddMethod(c, "execute:", funcptr(pickerExecute), "v@:@")
+  cocoaClassRegister(c)
+  let delegate = cocoaNew(c)
+  cocoaSetAssocKey(app, "brain.picker.delegate", delegate)
+  cocoaSetDataSource(table, delegate)
+  msg_1(input, "setDelegate:", delegate)
+  msg_1(table, "setTarget:", delegate)
+  msg_1(table, "setDoubleAction:", sel("execute:"))
+  cocoaSetAssocKey(app, "brain.picker.window", panel)
+  cocoaSetAssocKey(app, "brain.picker.input", input)
+  cocoaSetAssocKey(app, "brain.picker.table", table)
+  cocoaSetAssocKey(app, "brain.picker.detail", detail)
+  emit "1"
+}
+func pickerOpen(mode) {
+  pickerInit()
+  let app = appH()
+  cocoaSetAssocKey(app, "brain.picker.mode", cocoaNumber(mode))
+  cocoaSetAssocKey(app, "brain.picker.limited", cocoaNumber(0))
+  let source = cocoaArray()
+  if mode == 0 && brainFlag("brain.workspace", 1) == 1 {
+    let root = msg(cocoaGetAssocKey(app, "brain.dir"), "UTF8String")
+    let enumerator = msg_1(msg(cls("NSFileManager"), "defaultManager"), "enumeratorAtPath:", nsString(root))
+    let item = msg(enumerator, "nextObject")
+    let visited = 0
+    while item != 0 && visited < 20000 {
+      let attrs = msg(enumerator, "fileAttributes")
+      let kind = msg_1(attrs, "objectForKey:", nsString("NSFileType"))
+      if msg_1(kind, "isEqualToString:", nsString("NSFileTypeDirectory")) == 1 {
+        let name = msg(item, "lastPathComponent")
+        if msg_1(name, "isEqualToString:", nsString(".git")) == 1 || msg_1(name, "isEqualToString:", nsString("node_modules")) == 1 || msg_1(name, "hasSuffix:", nsString(".app")) == 1 { msg(enumerator, "skipDescendants") }
+      } else { if msg_1(kind, "isEqualToString:", nsString("NSFileTypeRegular")) == 1 { cocoaArrayAdd(source, item) } }
+      visited = visited + 1
+      item = msg(enumerator, "nextObject")
+    }
+    if item != 0 { cocoaSetAssocKey(app, "brain.picker.limited", cocoaNumber(1)) }
+  } else { if mode == 1 {
+    let names = "File: New Text File|File: Open File|File: Open Folder|File: Save|File: Save As|File: Save All|File: Revert File|File: Close Editor|View: Toggle Sidebar|View: Zoom In|View: Zoom Out|View: Reset Zoom|Go: Quick Open"
+    if storeEdition() == 0 { names = names + "|View: Toggle Terminal|Run: Build File|Run: Run File|Run: Stop" }
+    source = msg_1(nsString(names), "componentsSeparatedByString:", nsString("|"))
+  } }
+  cocoaSetAssocKey(app, "brain.picker.source", source)
+  let panel = cocoaGetAssocKey(app, "brain.picker.window")
+  let title = "Quick Open"
+  let placeholder = "Search files by name or path"
+  if mode == 1 { title = "Command Palette"  placeholder = "Search commands" }
+  msg_1(panel, "setTitle:", nsString(title))
+  let input = cocoaGetAssocKey(app, "brain.picker.input")
+  msg_1(input, "setStringValue:", nsString(""))
+  msg_1(input, "setPlaceholderString:", nsString(placeholder))
+  pickerFilter()
+  msg(panel, "center")
+  cocoaShow(panel, app)
+  cocoaMakeFirstResponder(panel, input)
+  emit "1"
+}
+func onQuickOpen(self, cmd, sender) { pickerOpen(0) }
+func onCommandPalette(self, cmd, sender) { pickerOpen(1) }
 
 // ── File-menu handlers ──────────────────────────────────────────────────
 func newUntitled(ext) {
@@ -1614,10 +2067,23 @@ func newUntitled(ext) {
   let texts = cocoaGetAssocKey(app, "brain.tabtexts")
   let serial = brainFlag("brain.untitledserial", 0) + 1
   cocoaSetAssocKey(app, "brain.untitledserial", cocoaNumber(serial))
-  cocoaArrayAdd(paths, nsString(projDir() + "/untitled-" + serial + ext))
+  let candidate = projDir() + "/untitled-" + serial + ext
+  let unique = 0
+  while unique == 0 {
+    unique = 1
+    let i = 0
+    while i < cocoaArrayCount(paths) {
+      if msg(cocoaArrayGet(paths, i), "UTF8String") == candidate { unique = 0 }
+      i = i + 1
+    }
+    if unique == 0 { serial = serial + 1  candidate = projDir() + "/untitled-" + serial + ext }
+  }
+  cocoaSetAssocKey(app, "brain.untitledserial", cocoaNumber(serial))
+  cocoaArrayAdd(paths, nsString(candidate))
   cocoaArrayAdd(texts, nsString(""))
   cocoaArrayAdd(cocoaGetAssocKey(app, "brain.savedtexts"), nsString(""))
   addTabUndo()
+  cocoaSetAssocKey(cocoaArrayGet(cocoaGetAssocKey(app, "brain.tabundos"), cocoaArrayCount(paths) - 1), "brain.untitled", cocoaNumber(1))
   rebuildTabs()
   selectTab(cocoaArrayCount(paths) - 1)
   emit "1"
@@ -1639,21 +2105,25 @@ func launchWindow(folder) {
 func onNewWindow(self, cmd, sender) { launchWindow("") }
 // reload the file tree in-place to folder `d`
 func loadFolder(d) {
+  restoreAccess(d)
+  d = canonicalPath(d)
   let pathOwner = nsString(d)
   d = msg(pathOwner, "UTF8String")
   restoreAccess(d)
   let app = appH()
   let entries = msg_2(msg(cls("NSFileManager"), "defaultManager"), "contentsOfDirectoryAtPath:error:", nsString(d), 0)
-  if entries == 0 { cocoaAlert("Could not open folder", "The folder could not be read: " + d)  emit "1" }
+  if entries == 0 { brainAlert("Could not open folder", "The folder could not be read: " + d)  emit "1" }
+  cocoaSetAssocKey(app, "brain.workspace", cocoaNumber(1))
+  msg_1(cocoaGetAssocKey(app, "brain.openfolder"), "setHidden:", 1)
   recentAdd("folders", d)
   let ds = cocoaGetAssocKey(app, "brain.ds")
-  let files = cocoaArray()
-  fillFiles(files, d)
-  cocoaSetAssocKey(ds, "files", files)
+  let root = explorerNode(d, baseName(d), 1)
+  cocoaSetAssocKey(ds, "root", root)
   cocoaSetAssocKey(ds, "dir", nsString(d))
   cocoaSetAssocKey(app, "brain.dir", nsString(d))
-  cocoaReload(cocoaGetAssocKey(app, "brain.table"))
-  msg_1(cocoaGetAssocKey(app, "brain.win"), "setTitle:", nsString("brain — " + d))
+  let outline = cocoaGetAssocKey(app, "brain.table")
+  cocoaReload(outline)
+  msg_1(outline, "expandItem:", root)
   emit "1"
 }
 func rememberURL(url) {
@@ -1668,19 +2138,41 @@ func rememberURL(url) {
   msg(bookmarks, "release")
   emit "1"
 }
+// Normalize the macOS /private aliases without needing access to the file first.
+func scopePath(path) {
+  if path == "/private/tmp" || indexOf(path, "/private/tmp/") == 0 { emit substring(path, 8, len(path)) }
+  if path == "/private/var" || indexOf(path, "/private/var/") == 0 { emit substring(path, 8, len(path)) }
+  emit path
+}
+func scopeContains(root, path) {
+  root = scopePath(root)
+  path = scopePath(path)
+  if root == path { emit 1 }
+  emit msg_1(nsString(path), "hasPrefix:", nsString(root + "/"))
+}
 func restoreAccess(path) {
   if storeEdition() == 0 { emit "1" }
   let scopes = cocoaGetAssocKey(appH(), "brain.scopes")
   if scopes == 0 { scopes = cocoaArray()  cocoaSetAssocKey(appH(), "brain.scopes", scopes) }
   let i = 0
   while i < cocoaArrayCount(scopes) {
-    if msg_1(msg(cocoaArrayGet(scopes, i), "path"), "isEqualToString:", nsString(path)) == 1 { emit "1" }
+    if scopeContains(msg(msg(cocoaArrayGet(scopes, i), "path"), "UTF8String"), path) == 1 { emit "1" }
     i = i + 1
   }
   let defaults = msg(cls("NSUserDefaults"), "standardUserDefaults")
   let bookmarks = msg_1(defaults, "dictionaryForKey:", nsString("brain.bookmarks"))
-  let data = msg_1(bookmarks, "objectForKey:", nsString(path))
-  if data == 0 { emit "1" }
+  let keys = msg(bookmarks, "allKeys")
+  let best = 0
+  let length = 0 - 1
+  i = 0
+  while i < cocoaArrayCount(keys) {
+    let key = cocoaArrayGet(keys, i)
+    let root = msg(key, "UTF8String")
+    if scopeContains(root, path) == 1 && len(root) > length { best = key  length = len(root) }
+    i = i + 1
+  }
+  if best == 0 { emit "1" }
+  let data = msg_1(bookmarks, "objectForKey:", best)
   let url = msg_5(cls("NSURL"), "URLByResolvingBookmarkData:options:relativeToURL:bookmarkDataIsStale:error:", data, 1024, 0, 0, 0)
   if url != 0 { if msg(url, "startAccessingSecurityScopedResource") == 1 {
     cocoaArrayAdd(scopes, url)
@@ -1698,7 +2190,7 @@ func choosePanel(folder, saving) {
     msg_1(panel, "setAllowsMultipleSelection:", 0)
   }
   msg_1(panel, "setCanCreateDirectories:", 1)
-  if msg(panel, "runModal") != 1 { emit "" }
+  if runBrainPanel(panel) != 1 { emit "" }
   let url = msg(panel, "URL")
   rememberURL(url)
   emit msg(msg(url, "path"), "UTF8String")
@@ -1715,7 +2207,7 @@ func onOpenWorkspace(self, cmd, sender) {
     let attrs = msg_2(msg(cls("NSFileManager"), "defaultManager"), "attributesOfItemAtPath:error:", nsString(folder), 0)
     let kind = msg_1(attrs, "objectForKey:", nsString("NSFileType"))
     if msg_1(kind, "isEqualToString:", nsString("NSFileTypeDirectory")) == 1 { loadFolder(folder) }
-    else { cocoaAlert("Invalid workspace", "Select a workspace saved by this editor containing a folder path.") }
+    else { brainAlert("Invalid workspace", "Select a workspace saved by this editor containing a folder path.") }
   }
   emit "1"
 }
@@ -1738,11 +2230,12 @@ func onSaveAs(self, cmd, sender) {
   saveCurTab()
   let path = chooseSave()
   if len(path) == 0 { emit "1" }
+  path = canonicalPath(path)
   let paths = cocoaGetAssocKey(app, "brain.tabpaths")
   let i = 0
   while i < cocoaArrayCount(paths) {
     if i != idx { if msg(cocoaArrayGet(paths, i), "UTF8String") == path {
-      cocoaAlert("File already open", "Close the other tab before replacing this document.")
+      brainAlert("File already open", "Close the other tab before replacing this document.")
       emit "1"
     } }
     i = i + 1
@@ -1750,6 +2243,7 @@ func onSaveAs(self, cmd, sender) {
   let text = cocoaArrayGet(cocoaGetAssocKey(app, "brain.tabtexts"), idx)
   if writeDocument(path, text) == 0 { emit "1" }
   cocoaArraySet(paths, idx, nsString(path))
+  cocoaSetAssocKey(cocoaArrayGet(cocoaGetAssocKey(app, "brain.tabundos"), idx), "brain.untitled", cocoaNumber(0))
   cocoaArraySet(cocoaGetAssocKey(app, "brain.savedtexts"), idx, text)
   cocoaSetAssocKey(app, "brain.curpath", cocoaArrayGet(paths, idx))
   cocoaSetAssocKey(app, "brain.displayedpath", cocoaArrayGet(paths, idx))
@@ -1785,7 +2279,7 @@ func onRevert(self, cmd, sender) {
   let cp = cocoaGetAssocKey(app, "brain.curpath")
   if cp == 0 { emit "1" }
   let contents = msg_3(cls("NSString"), "stringWithContentsOfFile:encoding:error:", cp, 4, 0)
-  if contents == 0 { cocoaAlert("Could not revert", "The file could not be read as UTF-8 text.")  emit "1" }
+  if readableText(contents) == 0 { brainAlert("Could not revert", "The file could not be read as UTF-8 text.")  emit "1" }
   saveCurTab()
   let idx = curTabIdx()
   let current = cocoaArrayGet(cocoaGetAssocKey(app, "brain.tabtexts"), idx)
@@ -1794,7 +2288,7 @@ func onRevert(self, cmd, sender) {
     msg_1(alert, "setMessageText:", nsString("Discard changes and reload this file?"))
     msg_1(alert, "addButtonWithTitle:", nsString("Cancel"))
     msg_1(alert, "addButtonWithTitle:", nsString("Revert"))
-    let response = msg(alert, "runModal")
+    let response = runBrainAlert(alert)
     msg(alert, "release")
     if response != 1001 { emit "1" }
   }
@@ -1852,8 +2346,15 @@ func installLayout(win, table, editor, term, keys) {
   cocoaSetFont(header, msg_d1(cls("NSFont"), "systemFontOfSize:", 11))
   cocoaSetTextColor(header, cocoaRGB(164, 166, 174))
   themeSurface(side, themeSidebar(), 0)
+  let openFolder = cocoaButton(win, "Open Folder", 16, 630, 178, 30)
+  moveView(openFolder, side, 16, 630, 178, 30, 10)
+  cocoaOnClickKeyed(openFolder, "open-folder", funcptr(onOpenFolder))
+  msg_1(openFolder, "setHidden:", brainFlag("brain.workspace", 1))
+  cocoaSetAssocKey(app, "brain.openfolder", openFolder)
   let treesv = msg(table, "enclosingScrollView")
   moveView(treesv, side, 0, 0, 210, 672, 18)
+  msg(openFolder, "removeFromSuperview")
+  msg_1(side, "addSubview:", openFolder)
   msg_1(table, "setHeaderView:", 0)
   let tabs = pane(right, 0, 666, 829, 32, 10)
   themeSurface(tabs, themeSidebar(), 0)
@@ -1931,8 +2432,31 @@ func onZoomOut(self, cmd, sender)   { let s = brainFlag("brain.fontsize", 13) - 
 func onZoomReset(self, cmd, sender) { brainSetFontSize(13) }
 
 // kcode's native toolbar: SF Symbols keep the macOS appearance.
+func onWindowExit(self, cmd, sender) { cocoaQuit(appH()) }
+func onWindowMinimize(self, cmd, sender) {
+  let win = cocoaGetAssocKey(appH(), "brain.win")
+  if msg(win, "styleMask") % 32768 >= 16384 {
+    cocoaSetAssocKey(appH(), "brain.minimizeafterfullscreen", cocoaNumber(1))
+    msg_1(win, "toggleFullScreen:", sender)
+  } else { msg_1(win, "performMiniaturize:", sender) }
+  emit "1"
+}
+func onWindowMaximize(self, cmd, sender) {
+  let win = cocoaGetAssocKey(appH(), "brain.win")
+  if msg(win, "styleMask") % 32768 >= 16384 { msg_1(win, "toggleFullScreen:", sender) }
+  else { msg_1(win, "zoom:", sender) }
+  emit "1"
+}
+func onExitFullscreen(self, cmd, notification) {
+  if brainFlag("brain.minimizeafterfullscreen", 0) == 1 {
+    cocoaSetAssocKey(appH(), "brain.minimizeafterfullscreen", cocoaNumber(0))
+    msg_1(cocoaGetAssocKey(appH(), "brain.win"), "performMiniaturize:", 0)
+  }
+  emit "1"
+}
 func toolbarIDs(self, cmd, toolbar) {
   let items = cocoaArray()
+  cocoaArrayAdd(items, nsString("windowControls"))
   cocoaArrayAdd(items, nsString("NSToolbarFlexibleSpaceItem"))
   cocoaArrayAdd(items, nsString("files"))
   if storeEdition() == 0 { cocoaArrayAdd(items, nsString("actions")) }
@@ -1940,10 +2464,14 @@ func toolbarIDs(self, cmd, toolbar) {
 }
 func toolbarItem(self, cmd, toolbar, identifier, inserting) {
   let name = msg(identifier, "UTF8String")
-  if name == "files" || name == "actions" {
+  if name == "files" || name == "actions" || name == "windowControls" {
     let group = msg_1(msg(cls("NSToolbarItemGroup"), "alloc"), "initWithItemIdentifier:", identifier)
     let children = cocoaArray()
-    if name == "files" {
+    if name == "windowControls" {
+      cocoaArrayAdd(children, toolbarItem(self, cmd, toolbar, nsString("windowExit"), inserting))
+      cocoaArrayAdd(children, toolbarItem(self, cmd, toolbar, nsString("windowMinimize"), inserting))
+      cocoaArrayAdd(children, toolbarItem(self, cmd, toolbar, nsString("windowMaximize"), inserting))
+    } else if name == "files" {
       cocoaArrayAdd(children, toolbarItem(self, cmd, toolbar, nsString("open"), inserting))
       cocoaArrayAdd(children, toolbarItem(self, cmd, toolbar, nsString("save"), inserting))
     } else {
@@ -1960,6 +2488,9 @@ func toolbarItem(self, cmd, toolbar, identifier, inserting) {
   if name == "save" { title = "Save"  symbol = "square.and.arrow.down"  action = "toolbarSave:" }
   if name == "build" { title = "Build"  symbol = "hammer"  action = "toolbarBuild:" }
   if name == "run" { title = "Run"  symbol = "play.fill"  action = "toolbarRun:" }
+  if name == "windowExit" { title = "Exit"  symbol = "xmark"  action = "windowExit:" }
+  if name == "windowMinimize" { title = "Minimize"  symbol = "minus"  action = "windowMinimize:" }
+  if name == "windowMaximize" { title = "Maximize"  symbol = "arrow.up.left.and.arrow.down.right"  action = "windowMaximize:" }
   let item = msg_1(msg(cls("NSToolbarItem"), "alloc"), "initWithItemIdentifier:", identifier)
   msg_1(item, "setLabel:", nsString(title))
   msg_1(item, "setToolTip:", nsString(title))
@@ -1979,8 +2510,7 @@ func drawLineNumbers(self, cmd) {
   let scrollY = msgPointY(clip, "bounds", 0)
   let lineHeight = brainFlag("brain.fontsize", 13) + 3
   let first = scrollY / lineHeight
-  let source = cocoaTVGetString(editor)
-  let total = nlines(source) + 1
+  let total = brainFlag("brain.linecount", 1)
   let attrs = cocoaTextAttrs(cocoaMonoFont(10), cocoaRGB(115, 120, 128))
   cocoaColorSet(cocoaRGB(40, 40, 40))
   cocoaFillRect(0, 0, 48, 10000)
@@ -2015,6 +2545,11 @@ func drawMinimap(self, cmd) {
   }
   emit "1"
 }
+func updateLineCount(editor) {
+  let lines = msg_1(msg(editor, "string"), "componentsSeparatedByString:", nsString("\n"))
+  cocoaSetAssocKey(appH(), "brain.linecount", cocoaNumber(cocoaArrayCount(lines)))
+  emit "1"
+}
 func refreshEditorChrome() {
   let app = appH()
   let editor = cocoaGetAssocKey(app, "brain.editor")
@@ -2030,11 +2565,10 @@ func refreshEditorChrome() {
   let textLength = msg(text, "length")
   if selected < 0 { selected = 0 }
   if selected > textLength { selected = textLength }
-  let prefix = msg(msg_1(text, "substringToIndex:", selected), "UTF8String")
-  let line = nlines(prefix) + 1
-  let pos = len(prefix) - 1
-  while pos >= 0 { if prefix[pos] == "\n" { break }  pos = pos - 1 }
-  let column = msg(nsString(substring(prefix, pos + 1, len(prefix))), "length") + 1
+  let prefix = msg_1(text, "substringToIndex:", selected)
+  let lines = msg_1(prefix, "componentsSeparatedByString:", nsString("\n"))
+  let line = cocoaArrayCount(lines)
+  let column = msg(msg(lines, "lastObject"), "length") + 1
   msg_1(status, "setStringValue:", nsString("  Ln " + line + ", Col " + column + "      " + msg(cocoaGetAssocKey(app, "brain.lang"), "UTF8String") + "      " + msg(text, "length") + " chars"))
   msg_1(cocoaGetAssocKey(app, "brain.ruler"), "setNeedsDisplay:", 1)
   msg_1(cocoaGetAssocKey(app, "brain.minimap"), "setNeedsDisplay:", 1)
@@ -2077,9 +2611,126 @@ func applicationOpenFiles(self, cmd, app, filenames) {
   emit "1"
 }
 func applicationReopen(self, cmd, app, visible) {
-  if visible == 0 { msg_1(cocoaGetAssocKey(app, "brain.win"), "makeKeyAndOrderFront:", 0) }
+  if cocoaGetAssocKey(app, "brain.promptwindow") != 0 { raiseActivePrompt()  emit 1 }
+  if visible == 0 {
+    if cocoaArrayCount(cocoaGetAssocKey(app, "brain.tabpaths")) == 0 { newUntitled(".txt") }
+    msg_1(cocoaGetAssocKey(app, "brain.win"), "makeKeyAndOrderFront:", 0)
+    cocoaMakeFirstResponder(cocoaGetAssocKey(app, "brain.win"), cocoaGetAssocKey(app, "brain.editor"))
+  }
   emit 1
 }
+// Recovery lives in Application Support, which Foundation resolves inside the sandbox.
+func recoveryDirectory() {
+  let fm = msg(cls("NSFileManager"), "defaultManager")
+  let urls = msg_2(fm, "URLsForDirectory:inDomains:", 14, 1)
+  let base = msg(msg(msg(urls, "firstObject"), "path"), "UTF8String")
+  let path = base + "/brain/Recovery"
+  msg_4(fm, "createDirectoryAtPath:withIntermediateDirectories:attributes:error:", nsString(path), 1, 0, 0)
+  emit path
+}
+func recoveryPath() {
+  let cached = cocoaGetAssocKey(appH(), "brain.recoverypath")
+  if cached != 0 { emit msg(cached, "UTF8String") }
+  let pid = msg(msg(cls("NSProcessInfo"), "processInfo"), "processIdentifier")
+  let path = recoveryDirectory() + "/session-" + pid + ".plist"
+  cocoaSetAssocKey(appH(), "brain.recoverypath", nsString(path))
+  emit path
+}
+func recoveryClear() {
+  msg_2(msg(cls("NSFileManager"), "defaultManager"), "removeItemAtPath:error:", nsString(recoveryPath()), 0)
+  emit "1"
+}
+func recoveryWrite() {
+  let app = appH()
+  saveCurTab()
+  let paths = cocoaGetAssocKey(app, "brain.tabpaths")
+  let texts = cocoaGetAssocKey(app, "brain.tabtexts")
+  let saved = cocoaGetAssocKey(app, "brain.savedtexts")
+  let docs = cocoaArray()
+  let i = 0
+  while i < cocoaArrayCount(paths) {
+    if msg_1(cocoaArrayGet(texts, i), "isEqualToString:", cocoaArrayGet(saved, i)) == 0 {
+      let item = allocInit("NSMutableDictionary")
+      msg_2(item, "setObject:forKey:", cocoaArrayGet(paths, i), nsString("path"))
+      msg_2(item, "setObject:forKey:", cocoaArrayGet(texts, i), nsString("text"))
+      msg_2(item, "setObject:forKey:", cocoaArrayGet(saved, i), nsString("saved"))
+      msg_2(item, "setObject:forKey:", cocoaNumber(cocoaNumberVal(cocoaGetAssocKey(cocoaArrayGet(cocoaGetAssocKey(app, "brain.tabundos"), i), "brain.untitled"))), nsString("untitled"))
+      cocoaArrayAdd(docs, item)
+      msg(item, "release")
+    }
+    i = i + 1
+  }
+  if cocoaArrayCount(docs) == 0 { recoveryClear()  emit "1" }
+  let root = allocInit("NSMutableDictionary")
+  msg_2(root, "setObject:forKey:", docs, nsString("documents"))
+  msg_2(root, "setObject:forKey:", cocoaNumber(msg(msg(cls("NSProcessInfo"), "processInfo"), "processIdentifier")), nsString("pid"))
+  let data = msg_4(cls("NSPropertyListSerialization"), "dataWithPropertyList:format:options:error:", root, 100, 0, 0)
+  let ok = 0
+  if data != 0 { ok = msg_2(data, "writeToFile:atomically:", nsString(recoveryPath()), 1) }
+  msg(root, "release")
+  emit ok
+}
+func recoveryRestore() {
+  let app = appH()
+  let fm = msg(cls("NSFileManager"), "defaultManager")
+  let folder = recoveryDirectory()
+  let files = msg_2(fm, "contentsOfDirectoryAtPath:error:", nsString(folder), 0)
+  let i = 0
+  while i < cocoaArrayCount(files) {
+    let name = msg(cocoaArrayGet(files, i), "UTF8String")
+    if extOf(name) == "plist" {
+      let path = folder + "/" + name
+      let data = msg_1(cls("NSData"), "dataWithContentsOfFile:", nsString(path))
+      let root = 0
+      if data != 0 { root = msg_4(cls("NSPropertyListSerialization"), "propertyListWithData:options:format:error:", data, 0, 0, 0) }
+      if msg_1(root, "isKindOfClass:", cls("NSDictionary")) == 1 {
+        let pidValue = msg_1(root, "objectForKey:", nsString("pid"))
+        let pid = 0
+        if msg_1(pidValue, "isKindOfClass:", cls("NSNumber")) == 1 { pid = cocoaNumberVal(pidValue) }
+        let running = msg_1(cls("NSRunningApplication"), "runningApplicationWithProcessIdentifier:", pid)
+        if running == 0 && pid > 0 {
+          let docs = msg_1(root, "objectForKey:", nsString("documents"))
+          if msg_1(docs, "isKindOfClass:", cls("NSArray")) == 1 { if cocoaArrayCount(docs) > 0 {
+            let alert = allocInit("NSAlert")
+            msg_1(alert, "setMessageText:", nsString("Recover unsaved documents?"))
+            msg_1(alert, "setInformativeText:", nsString("An earlier session ended with unsaved changes. Restore them to continue editing."))
+            msg_1(alert, "addButtonWithTitle:", nsString("Restore"))
+            msg_1(alert, "addButtonWithTitle:", nsString("Discard"))
+            msg_1(alert, "addButtonWithTitle:", nsString("Later"))
+            let response = runBrainAlert(alert)
+            msg(alert, "release")
+            if response == 1000 {
+              let j = 0
+              while j < cocoaArrayCount(docs) {
+                let item = cocoaArrayGet(docs, j)
+                if msg_1(item, "isKindOfClass:", cls("NSDictionary")) == 1 {
+                  let docpath = msg_1(item, "objectForKey:", nsString("path"))
+                  let text = msg_1(item, "objectForKey:", nsString("text"))
+                  let saved = msg_1(item, "objectForKey:", nsString("saved"))
+                  if msg_1(docpath, "isKindOfClass:", cls("NSString")) == 1 && msg_1(text, "isKindOfClass:", cls("NSString")) == 1 && msg_1(saved, "isKindOfClass:", cls("NSString")) == 1 {
+                    cocoaArrayAdd(cocoaGetAssocKey(app, "brain.tabpaths"), docpath)
+                    cocoaArrayAdd(cocoaGetAssocKey(app, "brain.tabtexts"), text)
+                    cocoaArrayAdd(cocoaGetAssocKey(app, "brain.savedtexts"), saved)
+                    addTabUndo()
+                    let index = cocoaArrayCount(cocoaGetAssocKey(app, "brain.tabundos")) - 1
+                    cocoaSetAssocKey(cocoaArrayGet(cocoaGetAssocKey(app, "brain.tabundos"), index), "brain.untitled", cocoaNumber(cocoaNumberVal(msg_1(item, "objectForKey:", nsString("untitled")))))
+                  }
+                }
+                j = j + 1
+              }
+              // Persist the restored copies before retiring the old session snapshot.
+              if recoveryWrite() == 1 { msg_2(fm, "removeItemAtPath:error:", nsString(path), 0) }
+            }
+            if response == 1001 { msg_2(fm, "removeItemAtPath:error:", nsString(path), 0) }
+          } }
+        }
+      }
+    }
+    i = i + 1
+  }
+  emit "1"
+}
+
 func storeEdition() {
   let info = msg(msg(cls("NSBundle"), "mainBundle"), "infoDictionary")
   emit msg(msg_1(info, "objectForKey:", nsString("BrainStoreEdition")), "boolValue")
@@ -2137,12 +2788,70 @@ func editorRegressionTests() {
   regressionAssert(writeDocument("/tmp/kcode-document-regression.txt", msg(editor, "string")) == 1, "atomic save")
   regressionAssert(readFile("/tmp/kcode-document-regression.txt") == cocoaTVGetString(editor), "UTF-8 save round trip")
   let paths = cocoaGetAssocKey(app, "brain.tabpaths")
-  cocoaArraySet(paths, 0, nsString("/tmp/kcode-document-regression.txt"))
+  cocoaArraySet(paths, 0, nsString(canonicalPath("/tmp/kcode-document-regression.txt")))
   cocoaSetAssocKey(app, "brain.curpath", cocoaArrayGet(paths, 0))
   cocoaSetAssocKey(app, "brain.displayedpath", cocoaArrayGet(paths, 0))
+  cocoaSetAssocKey(cocoaArrayGet(cocoaGetAssocKey(app, "brain.tabundos"), 0), "brain.untitled", cocoaNumber(0))
+  cocoaArraySet(cocoaGetAssocKey(app, "brain.savedtexts"), 0, nsString(cocoaTVGetString(editor)))
   regressionAssert(saveTab(0) == 1, "named save succeeds")
   regressionAssert(msg(msg(win, "title"), "UTF8String") == "kcode-document-regression.txt", "save retains title")
   regressionAssert(msg(cocoaGetAssocKey(app, "brain.lang"), "UTF8String") == "txt", "save retains language")
+  cocoaFinishLaunching(app)
+  cocoaShow(win, app)
+  cocoaPumpEvents(app)
+  let orderingAlert = allocInit("NSAlert")
+  msg_1(orderingAlert, "setMessageText:", nsString("Ordering regression"))
+  msg(orderingAlert, "layout")
+  let promptWindow = msg(orderingAlert, "window")
+  beginPrompt(promptWindow)
+  msg_1(promptWindow, "makeKeyAndOrderFront:", 0)
+  raiseActivePrompt()
+  cocoaPumpEvents(app)
+  regressionAssert(msg(promptWindow, "collectionBehavior") == 257, "prompt joins fullscreen Space")
+  regressionAssert(msg(promptWindow, "level") == 8, "prompt uses modal window level")
+  regressionAssert(msg_1(msg(app, "keyWindow"), "isEqual:", promptWindow) == 1, "prompt receives focus")
+  msg_1(win, "makeKeyAndOrderFront:", 0)
+  onPromptActivation(0, 0, 0)
+  cocoaPumpEvents(app)
+  regressionAssert(msg_1(msg(app, "keyWindow"), "isEqual:", promptWindow) == 1, "editor activation restores prompt focus")
+  endPrompt(promptWindow)
+  regressionAssert(cocoaGetAssocKey(app, "brain.promptwindow") == 0, "prompt state cleared")
+  msg(orderingAlert, "release")
+  msg_1(win, "orderOut:", 0)
+  kp("PASS: modal prompt ordering, activation focus, prompt cleanup")
+  // Opening through a symlink alias must reuse the existing document.
+  regressionAssert(scopeContains("/private/tmp/project", "/tmp/project/nested/file.txt") == 1, "folder grants include descendants")
+  regressionAssert(scopeContains("/tmp/project", "/tmp/project-other/file.txt") == 0, "folder grants require a path boundary")
+  let countBeforeAlias = cocoaArrayCount(paths)
+  openTab("/private/tmp/kcode-document-regression.txt")
+  openTab("/tmp/kcode-document-regression.txt")
+  regressionAssert(cocoaArrayCount(paths) == countBeforeAlias, "canonical paths reuse tabs")
+  let nul = msg_3(msg(cls("NSString"), "alloc"), "initWithBytes:length:encoding:", fromCharCode(0), 1, 4)
+  regressionAssert(readableText(nul) == 0, "binary NUL rejected")
+  msg(nul, "release")
+  regressionAssert(readableText(nsString("café 🦋\r\n")) == 1, "Unicode text accepted")
+  let fm = msg(cls("NSFileManager"), "defaultManager")
+  let fixture = msg(msg(fm, "temporaryDirectory"), "path")
+  let pickerRoot = msg(fixture, "UTF8String") + "/kcode-picker-" + msg(msg(msg(cls("NSUUID"), "UUID"), "UUIDString"), "UTF8String")
+  msg_4(fm, "createDirectoryAtPath:withIntermediateDirectories:attributes:error:", nsString(pickerRoot + "/nested"), 1, 0, 0)
+  writeDocument(pickerRoot + "/alpha.txt", nsString("ALPHA"))
+  writeDocument(pickerRoot + "/nested/inside.txt", nsString("NESTED"))
+  cocoaSetAssocKey(app, "brain.dir", nsString(pickerRoot))
+  pickerOpen(0)
+  regressionAssert(cocoaArrayCount(cocoaGetAssocKey(app, "brain.picker.source")) == 2, "picker indexes nested files")
+  let input = cocoaGetAssocKey(app, "brain.picker.input")
+  msg_1(input, "setStringValue:", nsString("INSIDE"))
+  pickerFilter()
+  regressionAssert(cocoaArrayCount(cocoaGetAssocKey(app, "brain.picker.results")) == 1, "picker case-insensitive filtering")
+  regressionAssert(pickerCommand(0, 0, input, 0, sel("insertNewline:")) == 1, "picker handles Enter")
+  regressionAssert(cocoaTVGetString(editor) == "NESTED", "picker opens selected file")
+  pickerOpen(1)
+  msg_1(input, "setStringValue:", nsString("zoom in"))
+  pickerFilter()
+  regressionAssert(cocoaArrayCount(cocoaGetAssocKey(app, "brain.picker.results")) == 1, "command filtering")
+  regressionAssert(pickerCommand(0, 0, input, 0, sel("cancelOperation:")) == 1, "picker handles Escape")
+  kp("PASS: canonical path identity, binary rejection, Quick Open, Command Palette, picker keyboard controls")
+
   kp("PASS: tab isolation, background close, unique identity, undo isolation, switch guard, Unicode highlighting, atomic save, path lifetime")
   emit "1"
 }
@@ -2150,6 +2859,13 @@ func editorRegressionTests() {
 just run {
   if argCount() > 0 { if arg(0) == "--self-test" { editorRegressionTests()  exit(0) } }
   let dir = projDir()
+  if storeEdition() == 1 && argCount() == 0 {
+    let fm = msg(cls("NSFileManager"), "defaultManager")
+    let urls = msg_2(fm, "URLsForDirectory:inDomains:", 14, 1)
+    dir = msg(msg(msg(urls, "firstObject"), "path"), "UTF8String") + "/brain"
+    msg_4(fm, "createDirectoryAtPath:withIntermediateDirectories:attributes:error:", nsString(dir), 1, 0, 0)
+  }
+  restoreAccess(dir)
   let initialFile = ""
   let attrs = msg_2(msg(cls("NSFileManager"), "defaultManager"), "attributesOfItemAtPath:error:", nsString(dir), 0)
   let kind = msg_1(attrs, "objectForKey:", nsString("NSFileType"))
@@ -2177,6 +2893,9 @@ just run {
   }
 
   let app = cocoaInit()
+  let workspace = 0
+  if argCount() > 0 && len(initialFile) == 0 { workspace = 1 }
+  cocoaSetAssocKey(app, "brain.workspace", cocoaNumber(workspace))
   cocoaSetAssocKey(app, "brain.pty", cocoaNumber(m))
   let bar = cocoaMenuBar(app)
   let appMenu = cocoaMenuAdd(bar, "brain")
@@ -2221,7 +2940,7 @@ just run {
   msg_1(win, "setAppearance:", msg_1(cls("NSAppearance"), "appearanceNamed:", nsString("NSAppearanceNameDarkAqua")))
 
   // top: tree + editor + tabs ; bottom: terminal
-  let table = cocoaTable(win, 0, 252, 240, 388)
+  let table = explorerView(win)
   let editor = cocoaScrollText(win, 240, 252, 700, 356)
   cocoaSetFont(editor, cocoaFontFamily(cocoaMonoFont(13), "JetBrainsMono Nerd Font Mono"))
   // dark theme
@@ -2243,6 +2962,11 @@ just run {
   msg_1(editor, "setAutoresizingMask:", 2)
   msg_1(msg(editor, "enclosingScrollView"), "setBorderType:", 0)
   msg_1(msg(editor, "enclosingScrollView"), "setHasHorizontalScroller:", 1)
+  msg_1(editor, "setAutomaticQuoteSubstitutionEnabled:", 0)
+  msg_1(editor, "setAutomaticDashSubstitutionEnabled:", 0)
+  msg_1(editor, "setAutomaticTextReplacementEnabled:", 0)
+  msg_1(editor, "setAutomaticSpellingCorrectionEnabled:", 0)
+  msg_1(editor, "setSmartInsertDeleteEnabled:", 0)
   msg_1(editor, "setAllowsUndo:", 1)
   msg_1(editor, "setUsesFindBar:", 1)
 
@@ -2266,19 +2990,21 @@ just run {
   cocoaSetAssocKey(app, "brain.termsv", msg(term, "enclosingScrollView"))
   cocoaSetAssocKey(app, "brain.kview", kview)
 
-  // file tree data
-  let files = cocoaArray()
-  fillFiles(files, dir)
 
   let dsc = cocoaClassNew("BrainDelegate")
-  cocoaClassAddMethod(dsc, "numberOfRowsInTableView:", funcptr(dsRows), "q@:@")
-  cocoaClassAddMethod(dsc, "tableView:objectValueForTableColumn:row:", funcptr(dsValue), "@@:@@q")
-  cocoaClassAddMethod(dsc, "tableViewSelectionDidChange:", funcptr(dsSelect), "v@:@")
-  cocoaClassAddMethod(dsc, "tableView:willDisplayCell:forTableColumn:row:", funcptr(treeCell), "v@:@@@q")
-  cocoaClassAddMethod(dsc, "textStorageDidProcessEditing:", funcptr(reHL), "v@:@")
+  cocoaClassAddMethod(dsc, "outlineView:numberOfChildrenOfItem:", funcptr(outlineChildren), "q@:@@")
+  cocoaClassAddMethod(dsc, "outlineView:child:ofItem:", funcptr(outlineChild), "@@:@q@")
+  cocoaClassAddMethod(dsc, "outlineView:isItemExpandable:", funcptr(outlineExpandable), "c@:@@")
+  cocoaClassAddMethod(dsc, "outlineView:objectValueForTableColumn:byItem:", funcptr(outlineValue), "@@:@@@")
+  cocoaClassAddMethod(dsc, "outlineView:willDisplayCell:forTableColumn:item:", funcptr(outlineCell), "v@:@@@@")
+  cocoaClassAddMethod(dsc, "outlineViewSelectionDidChange:", funcptr(outlineSelect), "v@:@")
+  cocoaClassAddMethod(dsc, "textDidChange:", funcptr(onTextChanged), "v@:@")
   cocoaClassAddMethod(dsc, "toolbarDefaultItemIdentifiers:", funcptr(toolbarIDs), "@@:@")
   cocoaClassAddMethod(dsc, "toolbarAllowedItemIdentifiers:", funcptr(toolbarIDs), "@@:@")
   cocoaClassAddMethod(dsc, "toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:", funcptr(toolbarItem), "@@:@@c")
+  cocoaClassAddMethod(dsc, "windowExit:", funcptr(onWindowExit), "v@:@")
+  cocoaClassAddMethod(dsc, "windowMinimize:", funcptr(onWindowMinimize), "v@:@")
+  cocoaClassAddMethod(dsc, "windowMaximize:", funcptr(onWindowMaximize), "v@:@")
   cocoaClassAddMethod(dsc, "toolbarOpen:", funcptr(onOpen), "v@:@")
   cocoaClassAddMethod(dsc, "toolbarSave:", funcptr(onSave), "v@:@")
   cocoaClassAddMethod(dsc, "toolbarBuild:", funcptr(onBuild), "v@:@")
@@ -2287,6 +3013,9 @@ just run {
   cocoaClassAddMethod(dsc, "application:openFiles:", funcptr(applicationOpenFiles), "v@:@@")
   cocoaClassAddMethod(dsc, "applicationShouldHandleReopen:hasVisibleWindows:", funcptr(applicationReopen), "c@:@c")
   cocoaClassAddMethod(dsc, "applicationShouldTerminate:", funcptr(shouldTerminate), "q@:@")
+  cocoaClassAddMethod(dsc, "windowDidExitFullScreen:", funcptr(onExitFullscreen), "v@:@")
+  cocoaClassAddMethod(dsc, "windowDidBecomeMain:", funcptr(onPromptActivation), "v@:@")
+  cocoaClassAddMethod(dsc, "applicationDidBecomeActive:", funcptr(onPromptActivation), "v@:@")
   cocoaClassAddMethod(dsc, "windowShouldClose:", funcptr(shouldCloseWindow), "c@:@")
   cocoaClassAddMethod(dsc, "undoManagerForTextView:", funcptr(editorUndoManager), "@@:@")
   cocoaClassAddMethod(dsc, "textViewDidChangeSelection:", funcptr(onEditorSelection), "v@:@")
@@ -2297,7 +3026,7 @@ just run {
   msg_1(app, "setDelegate:", ds)
   msg_1(win, "setDelegate:", ds)
   cocoaSetAssocKey(app, "brain.table", table)
-  cocoaSetAssocKey(ds, "files", files)
+  cocoaSetAssocKey(ds, "root", explorerNode(dir, baseName(dir), 1))
   cocoaSetAssocKey(ds, "dir", nsString(dir))
   let column = cocoaArrayGet(msg(table, "tableColumns"), 0)
   let cell = msg_1(msg(cls("NSBrowserCell"), "alloc"), "initTextCell:", nsString(""))
@@ -2305,7 +3034,6 @@ just run {
   msg_1(column, "setDataCell:", cell)
   cocoaSetDataSource(table, ds)
   msg_1(table, "setDelegate:", ds)
-  cocoaTVSetStorageDelegate(editor, ds)
   msg_1(editor, "setDelegate:", ds)
   let toolbar = msg_1(msg(cls("NSToolbar"), "alloc"), "initWithIdentifier:", nsString("kcodeToolbar"))
   msg_1(toolbar, "setDelegate:", ds)
@@ -2329,8 +3057,8 @@ just run {
   msg_4(msg(cls("NSNotificationCenter"), "defaultCenter"), "addObserver:selector:name:object:", ds, sel("editorScrolled:"), nsString("NSViewBoundsDidChangeNotification"), clip)
 
   let fileMenu = cocoaMenuAdd(bar, "File")
-  cocoaMenuItem(fileMenu, "New Text File", "t", funcptr(onNewText))
-  cocoaMenuItem(fileMenu, "New File", "n", funcptr(onNewFile))
+  cocoaMenuItem(fileMenu, "New Text File", "n", funcptr(onNewText))
+  cocoaMenuItem(fileMenu, "New Krypton File", "", funcptr(onNewFile))
   cocoaMenuItem(fileMenu, "New Window", "N", funcptr(onNewWindow))
   cocoaMenuSeparator(fileMenu)
   cocoaMenuItem(fileMenu, "Open", "o", funcptr(onOpen))
@@ -2368,6 +3096,9 @@ just run {
   cocoaMenuItemSelTag(editMenu, "Find Previous", "G", "performTextFinderAction:", 3)
   cocoaMenuItemSelTag(editMenu, "Find and Replace", "F", "performTextFinderAction:", 12)
   let viewMenu = cocoaMenuAdd(bar, "View")
+  cocoaMenuItem(viewMenu, "Command Palette", "P", funcptr(onCommandPalette))
+  cocoaMenuItem(viewMenu, "Quick Open", "p", funcptr(onQuickOpen))
+  cocoaMenuSeparator(viewMenu)
   cocoaMenuItem(viewMenu, "Toggle Sidebar", "b", funcptr(onToggleSidebar))
   if storeEdition() == 0 { cocoaMenuItem(viewMenu, "Toggle Terminal", "j", funcptr(onToggleTerminal)) }
   cocoaMenuSeparator(viewMenu)
@@ -2382,9 +3113,15 @@ just run {
   }
 
   cocoaTVSetString(editor, "")
+  recoveryRestore()
   if len(initialFile) > 0 { openTab(initialFile) }
-  else { onNew(0, 0, 0) }
+  else {
+    let count = cocoaArrayCount(cocoaGetAssocKey(app, "brain.tabpaths"))
+    if count > 0 { selectTab(count - 1) }
+    else { onNew(0, 0, 0) }
+  }
   cocoaReload(table)
+  msg_1(table, "expandItem:", cocoaGetAssocKey(ds, "root"))
   cocoaShow(win, app)
   cocoaMakeFirstResponder(win, editor)
   cocoaFinishLaunching(app)
@@ -2413,12 +3150,13 @@ just run {
     }
     // auto save: every ~5s if enabled, write the current tab to disk
     if i - (i / 625) * 625 == 0 {
+      recoveryWrite()
       let asv = cocoaGetAssocKey(app, "brain.autosave")
       if asv != 0 { if cocoaNumberVal(asv) == 1 {
         let cp = cocoaGetAssocKey(app, "brain.curpath")
         if cp != 0 {
           let cpath = msg(cp, "UTF8String")
-          if indexOf(cpath, "untitled-") < 0 {
+          if cocoaNumberVal(cocoaGetAssocKey(cocoaArrayGet(cocoaGetAssocKey(app, "brain.tabundos"), curTabIdx()), "brain.untitled")) == 0 {
             saveCurTab()
             saveTab(curTabIdx())
           }

@@ -352,3 +352,5 @@ brain.app/
 dist/brain.app/
 
 dist/brain-store.app/
+
+dist/brain-app-store.pkg

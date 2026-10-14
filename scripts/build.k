@@ -18,8 +18,10 @@ func buildEdition(store) {
     checked("mkdir -p " + quoteArg(app + "/Contents/MacOS") + " " + quoteArg(app + "/Contents/Resources"))
     checked("env KRYPTON_ROOT=" + quoteArg(krypton) + " kcc --native " + quoteArg(root + "/brain.ks") + " -o " + quoteArg(app + "/Contents/MacOS/brain"))
     let icon = ""
-    if shOk("test -f " + quoteArg(root + "/brain.icns")) == "1" {
-        checked("cp " + quoteArg(root + "/brain.icns") + " " + quoteArg(app + "/Contents/Resources/brain.icns"))
+    let iconPath = root + "/brain.icns"
+    if shOk("test -f " + quoteArg(iconPath)) != "1" { iconPath = root + "/packaging/brain.icns" }
+    if shOk("test -f " + quoteArg(iconPath)) == "1" {
+        checked("cp " + quoteArg(iconPath) + " " + quoteArg(app + "/Contents/Resources/brain.icns"))
         icon = "<key>CFBundleIconFile</key><string>brain</string>"
     }
     let bundleID = "org.krypton-lang.brain"
@@ -36,11 +38,18 @@ func buildEdition(store) {
         "<key>CFBundleVersion</key><string>0.4.0</string>" +
         "<key>CFBundleShortVersionString</key><string>0.4.0</string>" +
         "<key>LSMinimumSystemVersion</key><string>13.0</string>" +
-        "<key>NSHighResolutionCapable</key><true/>" + icon +
+        "<key>NSHighResolutionCapable</key><true/><key>CFBundleSupportedPlatforms</key><array><string>MacOSX</string></array>" + icon +
         "<key>CFBundleDocumentTypes</key><array><dict>" +
-        "<key>CFBundleTypeName</key><string>Source code</string>" +
+        "<key>CFBundleTypeName</key><string>Text and source code</string>" +
         "<key>CFBundleTypeRole</key><string>Editor</string>" +
-        "<key>CFBundleTypeExtensions</key><array><string>k</string><string>ks</string><string>htk</string></array>" +
+        "<key>LSHandlerRank</key><string>Alternate</string>" +
+        "<key>LSItemContentTypes</key><array><string>public.text</string><string>public.plain-text</string><string>public.source-code</string><string>org.krypton-lang.source-code</string></array>" +
+        "</dict></array>" +
+        "<key>UTImportedTypeDeclarations</key><array><dict>" +
+        "<key>UTTypeIdentifier</key><string>org.krypton-lang.source-code</string>" +
+        "<key>UTTypeDescription</key><string>Krypton source code</string>" +
+        "<key>UTTypeConformsTo</key><array><string>public.source-code</string><string>public.plain-text</string></array>" +
+        "<key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>k</string><string>ks</string><string>htk</string></array></dict>" +
         "</dict></array></dict></plist>\n"
     writeFile(app + "/Contents/Info.plist", plist)
     checked("plutil -lint " + quoteArg(app + "/Contents/Info.plist"))

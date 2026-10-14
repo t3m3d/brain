@@ -2,7 +2,7 @@
 
 A native macOS code editor / IDE whose entire UI is **pure Krypton** on the
 [objk](https://krypton-lang.org/objk.html) Objective-C FFI — no Obj-C, no Swift
-source. A real Cocoa app (NSWindow, NSTextView, NSTableView, menus) driven by
+source. A real Cocoa app (NSWindow, NSTextView, NSOutlineView, menus) driven by
 Krypton functions used directly as Objective-C method IMPs.
 
 ## Features
@@ -42,7 +42,9 @@ restores kcode's charcoal palette, native toolbar, split panes, blue active tabs
 line-number gutter, minimap, and cursor status through Objective K's Cocoa bindings.
 The app menu includes Quit (⌘Q); View → Toggle Terminal (⌘J) expands/collapses
 and focuses the terminal. Long lines scroll horizontally so gutter numbers stay
-aligned. The sidebar currently navigates one folder at a time.
+aligned. Explorer expands folders lazily and shows nested files. Quick Open (⌘P) searches
+project paths; Command Palette (⌘⇧P) searches editor actions. New Text File
+uses ⌘N. Both pickers support Enter, Escape, and arrow keys.
 
 ## Release work
 
@@ -51,10 +53,15 @@ issues are tracked in [docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md).
 
 ```
 kr build.ks
-kr tests/editor_regression.ks  # native document-model and Unicode regressions
+brain.app/Contents/MacOS/brain --self-test # native regression checks; reliable exit status
 kr build_store.ks              # sandboxed editor-only preview in dist/
 ```
 
 The Store preview omits the terminal and external compiler. The full developer
 edition remains available. Store previews use ad-hoc signing for local sandbox
 testing; they are not signed archives suitable for App Store submission.
+
+The `kr` wrapper currently masks native child exit codes. CI should invoke the
+compiled app directly for regression checks, and compile release-check scripts
+with `kcc --native release_check.ks -o /tmp/brain-release-check`, then run
+`/tmp/brain-release-check`.

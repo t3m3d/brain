@@ -7,7 +7,7 @@ ad-hoc-signed bundle alone does not establish readiness.
 ## Editor acceptance gates
 
 - [ ] Repeated long/short file switches show each document's own contents.
-- [ ] Unsaved edits survive tab switches and closing a background tab.
+- [x] Unsaved edits survive tab switches and closing a background tab.
 - [ ] Each document has independent undo/redo history and selection/scroll state.
 - [ ] New documents have unique identities; Save opens a save panel.
 - [ ] Save As updates tab identity, title, language, and later Save destination.
@@ -28,10 +28,10 @@ ad-hoc-signed bundle alone does not establish readiness.
 ## Mac App Store gates
 
 - [x] Store feature scope chosen: editor-only; full developer edition retained.
-- [ ] Editor-only Store build verified to launch without external tool dependencies.
-- [ ] App Sandbox enabled and tested with actual entitlements.
-- [ ] Native file panels grant access; security-scoped bookmarks restore access.
-- [ ] Application Support/preferences/recovery files live in the app container.
+- [x] Editor-only Store build verified to launch without external tool dependencies.
+- [x] App Sandbox enabled and tested with actual entitlements (basic file-access checks).
+- [x] Native file panels grant access; security-scoped bookmarks restore access.
+- [x] Application Support/preferences/recovery files live in the app container.
 - [ ] Bundle identifier, display name, versions, minimum OS, and document UTIs finalized.
 - [ ] Icons, privacy disclosures, support URL, screenshots, and store metadata complete.
 - [ ] App and installer distribution certificates available with private keys.
@@ -66,3 +66,68 @@ untitled identities, independent undo-manager ownership, the switch guard,
 Unicode highlight ranges following emoji, and an atomic UTF-8 save round trip.
 This is model-level evidence; visible save dialogs, actual undo/redo gestures,
 window lifecycle, and sandbox relaunch behavior still require UI verification.
+
+## UI verification (2026-10-11)
+
+Developer build: Quick Open searches nested paths case-insensitively; Enter opens
+the selected document; arrow keys select a different result; empty searches show
+“No results”; Escape restores editor focus. Command Palette filters commands and
+runs Zoom In. Explorer expands nested folders and opens their files.
+
+The picker crash was traced to an unresolved theme helper in the previous binary;
+a fresh build with the corrected helper passed these UI checks. Native regression
+coverage now exercises picker construction, filtering, keyboard commands, binary
+NUL rejection, and canonical path identity. The compiler can emit a binary with an
+unresolved function call, so successful compilation alone is not sufficient.
+
+Earlier developer-build UI checks passed separate edits in two tabs, per-document
+undo/redo, background close with Discard, native Open/Save As panels, Find/Replace,
+terminal input and toggle, and a successful asynchronous Run. Remaining compound
+acceptance gates above stay unchecked until every part has evidence.
+
+Save-conflict UI verification preserved external disk changes and in-memory edits
+when Cancel was chosen. Revert Cancel preserved edits; Revert confirmation
+reloaded the disk contents.
+
+The sandboxed Store preview launched with no terminal/compiler controls. Native
+folder selection granted access to nested files; an atomic Unicode save reached
+the selected file; Application Support was confirmed inside the app container.
+Bookmark relaunch initially failed for nested files because only exact bookmark
+keys were checked. Ancestor-folder lookup and path-boundary checks were added;
+the relaunch result must be verified before checking that gate.
+
+Signing identities were rechecked on 2026-10-11: Developer ID Application remains
+available; no App Store application distribution identity was listed.
+
+Bookmark relaunch verification passed after the ancestor lookup fix: a fresh
+Store process opened the previously selected folder's nested file through a
+launch argument without another file panel. Empty startup/file-only windows now
+show Open Folder instead of exposing the home directory or app recovery folder.
+The running test window was left open when unsaved user typing appeared.
+
+The final compiler IR was inspected for unresolved calls. Remaining external
+calls are declared Objective-C runtime functions and the native bitAnd builtin;
+no undeclared theme helper remains.
+
+## Prompt rendering and window controls (2026-10-11)
+
+Native NSAlert windows exposed their accessibility text but rendered blank on
+this Objective K/manual-event-loop path. Confirmations now render ordinary
+AppKit labels and buttons in a dark panel. A modal session continues processing
+window updates until a response arrives. Cancel, Escape, and the panel close
+button preserve edits. Prompts use modal window level, join fullscreen Spaces,
+and regain focus on application/editor activation. The floating search picker
+is hidden before a prompt opens; dismissal restores editor focus.
+
+Explicit Exit, Minimize, and Maximize toolbar controls remain available when
+macOS hides the titlebar buttons. Exit still confirms unsaved documents. Prompt
+minimize hides the application together so the blocked owner cannot look frozen.
+The developer edition's exit cleanup now constructs an NSFileHandle using its
+instance initializer; the previous nonexistent class method crashed on quit.
+
+Native document and prompt-ordering regression checks pass. Visual checks
+confirmed readable confirmation text/buttons, Escape preserving edits, and the
+prompt close button preserving edits, readable prompts above the fullscreen editor,
+and visible native Open/Save panels. The same confirmation was visually checked
+in the sandboxed Store preview. Release acceptance still requires testing
+on additional supported macOS versions.
