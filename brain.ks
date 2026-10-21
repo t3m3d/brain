@@ -1148,11 +1148,13 @@ func onTextChanged(self, cmd, notification) {
   emit "1"
 }
 
-// Shared Objective K theme: calm navy surfaces and a mint focus accent.
+// Shared charcoal surfaces, with Krypton purple reserved for toolbar symbols.
 func themeCanvas() { emit cocoaRGB(31, 31, 36) }
 func themeSidebar() { emit cocoaRGB(37, 37, 42) }
 func themeText() { emit cocoaRGB(217, 219, 214) }
 func themeAccent() { emit cocoaRGB(92, 181, 237) }
+// Krypton primary-dark from krypton/web/site/export.htk: #5d16da.
+func themeToolbarPurple() { emit cocoaRGB(93, 22, 218) }
 func themeSurface(view, color, radius) {
   msg_1(view, "setWantsLayer:", 1)
   let layer = msg(view, "layer")
@@ -1233,7 +1235,7 @@ func rebuildTabs() {
     cocoaSetFont(nameb, msg_d1(cls("NSFont"), "systemFontOfSize:", 12))
     let tabColor = themeCanvas()
     if i == cur { tabColor = themeSidebar() }
-    themeSurface(nameb, tabColor, 0)
+    themeSurface(nameb, tabColor, 5)
     cocoaSetButtonTextColor(nameb, themeText())
     if i == cur {
       let accent = pane(cocoaGetAssocKey(app, "brain.tabbar"), x, 29, w, 2, 0)
@@ -1801,10 +1803,14 @@ func explorerNode(path, name, directory) {
   msg_2(node, "setObject:forKey:", nsString(path), nsString("path"))
   msg_2(node, "setObject:forKey:", nsString(name), nsString("name"))
   msg_2(node, "setObject:forKey:", cocoaNumber(directory), nsString("directory"))
-  emit msg(node, "autorelease")
+  let item = msg(node, "copy")
+  msg(node, "release")
+  emit msg(item, "autorelease")
 }
 func explorerChildren(node) {
-  let children = msg_1(node, "objectForKey:", nsString("children"))
+  // Outline items are hash keys. Cache children separately so expansion never
+  // mutates the dictionary and invalidates AppKit's expansion bookkeeping.
+  let children = cocoaGetAssocKey(node, "brain.explorer.children")
   if children != 0 { emit children }
   let dirs = cocoaArray()
   let files = cocoaArray()
@@ -1831,7 +1837,7 @@ func explorerChildren(node) {
   while i < cocoaArrayCount(dirs) { cocoaArrayAdd(children, cocoaArrayGet(dirs, i))  i = i + 1 }
   i = 0
   while i < cocoaArrayCount(files) { cocoaArrayAdd(children, cocoaArrayGet(files, i))  i = i + 1 }
-  msg_2(node, "setObject:forKey:", children, nsString("children"))
+  cocoaSetAssocKey(node, "brain.explorer.children", children)
   emit children
 }
 func outlineChildren(self, cmd, outline, item) {
@@ -2431,7 +2437,7 @@ func onZoomIn(self, cmd, sender)    { let s = brainFlag("brain.fontsize", 13) + 
 func onZoomOut(self, cmd, sender)   { let s = brainFlag("brain.fontsize", 13) - 1  if s < 7 { s = 7 }  brainSetFontSize(s) }
 func onZoomReset(self, cmd, sender) { brainSetFontSize(13) }
 
-// kcode's native toolbar: SF Symbols keep the macOS appearance.
+// Individual rounded controls leave breathing room between toolbar actions.
 func onWindowExit(self, cmd, sender) { cocoaQuit(appH()) }
 func onWindowMinimize(self, cmd, sender) {
   let win = cocoaGetAssocKey(appH(), "brain.win")
@@ -2456,32 +2462,26 @@ func onExitFullscreen(self, cmd, notification) {
 }
 func toolbarIDs(self, cmd, toolbar) {
   let items = cocoaArray()
-  cocoaArrayAdd(items, nsString("windowControls"))
   cocoaArrayAdd(items, nsString("NSToolbarFlexibleSpaceItem"))
-  cocoaArrayAdd(items, nsString("files"))
-  if storeEdition() == 0 { cocoaArrayAdd(items, nsString("actions")) }
+  cocoaArrayAdd(items, nsString("windowExit"))
+  cocoaArrayAdd(items, nsString("NSToolbarSpaceItem"))
+  cocoaArrayAdd(items, nsString("windowMinimize"))
+  cocoaArrayAdd(items, nsString("NSToolbarSpaceItem"))
+  cocoaArrayAdd(items, nsString("windowMaximize"))
+  cocoaArrayAdd(items, nsString("NSToolbarSpaceItem"))
+  cocoaArrayAdd(items, nsString("open"))
+  cocoaArrayAdd(items, nsString("NSToolbarSpaceItem"))
+  cocoaArrayAdd(items, nsString("save"))
+  if storeEdition() == 0 {
+    cocoaArrayAdd(items, nsString("NSToolbarSpaceItem"))
+    cocoaArrayAdd(items, nsString("build"))
+    cocoaArrayAdd(items, nsString("NSToolbarSpaceItem"))
+    cocoaArrayAdd(items, nsString("run"))
+  }
   emit items
 }
 func toolbarItem(self, cmd, toolbar, identifier, inserting) {
   let name = msg(identifier, "UTF8String")
-  if name == "files" || name == "actions" || name == "windowControls" {
-    let group = msg_1(msg(cls("NSToolbarItemGroup"), "alloc"), "initWithItemIdentifier:", identifier)
-    let children = cocoaArray()
-    if name == "windowControls" {
-      cocoaArrayAdd(children, toolbarItem(self, cmd, toolbar, nsString("windowExit"), inserting))
-      cocoaArrayAdd(children, toolbarItem(self, cmd, toolbar, nsString("windowMinimize"), inserting))
-      cocoaArrayAdd(children, toolbarItem(self, cmd, toolbar, nsString("windowMaximize"), inserting))
-    } else if name == "files" {
-      cocoaArrayAdd(children, toolbarItem(self, cmd, toolbar, nsString("open"), inserting))
-      cocoaArrayAdd(children, toolbarItem(self, cmd, toolbar, nsString("save"), inserting))
-    } else {
-      cocoaArrayAdd(children, toolbarItem(self, cmd, toolbar, nsString("build"), inserting))
-      cocoaArrayAdd(children, toolbarItem(self, cmd, toolbar, nsString("run"), inserting))
-    }
-    msg_1(group, "setSubitems:", children)
-    msg_1(group, "setSelectionMode:", 2)
-    emit group
-  }
   let title = "Open"
   let symbol = "folder"
   let action = "toolbarOpen:"
@@ -2494,9 +2494,42 @@ func toolbarItem(self, cmd, toolbar, identifier, inserting) {
   let item = msg_1(msg(cls("NSToolbarItem"), "alloc"), "initWithItemIdentifier:", identifier)
   msg_1(item, "setLabel:", nsString(title))
   msg_1(item, "setToolTip:", nsString(title))
-  msg_1(item, "setImage:", msg_2(cls("NSImage"), "imageWithSystemSymbolName:accessibilityDescription:", nsString(symbol), nsString(title)))
+  msg_1(item, "setBordered:", 1)
+  let image = msg_2(cls("NSImage"), "imageWithSystemSymbolName:accessibilityDescription:", nsString(symbol), nsString(title))
+  let palette = cocoaArray()
+  cocoaArrayAdd(palette, themeToolbarPurple())
+  let colors = msg_1(cls("NSImageSymbolConfiguration"), "configurationWithPaletteColors:", palette)
+  let size = msg_d2(cls("NSImageSymbolConfiguration"), "configurationWithPointSize:weight:", 17, 0.23)
+  let configuration = msg_1(colors, "configurationByApplyingConfiguration:", size)
+  let colored = msg_1(image, "imageWithSymbolConfiguration:", configuration)
+  // Template rendering would replace the explicit purple with the system tint.
+  msg_1(colored, "setTemplate:", 0)
+  msg_1(item, "setImage:", colored)
   msg_1(item, "setTarget:", self)
   msg_1(item, "setAction:", sel(action))
+  // Keep the existing row; a flipped holder gives an explicit top inset.
+  let holderClass = objc_lookUpClass("BrainToolbarHolder")
+  if holderClass == 0 {
+    holderClass = cocoaViewClassNew("BrainToolbarHolder")
+    cocoaClassAddMethod(holderClass, "isFlipped", funcptr(rulerFlipped), "c@:")
+    cocoaClassRegister(holderClass)
+  }
+  let holder = msg_frame(msg(holderClass, "alloc"), "initWithFrame:", 0, 0, 40, 44)
+  let button = msg_frame(msg(cls("NSButton"), "alloc"), "initWithFrame:", 0, 12, 40, 24)
+  msg_1(button, "setTitle:", nsString(""))
+  msg_1(button, "setImage:", colored)
+  msg_1(button, "setImagePosition:", 1)
+  msg_1(button, "setBordered:", 0)
+  msg_1(button, "setToolTip:", nsString(title))
+  msg_1(button, "setAccessibilityLabel:", nsString(title))
+  msg_1(button, "setTarget:", self)
+  msg_1(button, "setAction:", sel(action))
+  msg_1(holder, "addSubview:", button)
+  msg_1(item, "setView:", holder)
+  msg_d2(item, "setMinSize:", 40, 44)
+  msg_d2(item, "setMaxSize:", 40, 44)
+  msg(button, "release")
+  msg(holder, "release")
   emit item
 }
 func onBuild(self, cmd, sender) { queueBuild(0) }
@@ -2836,6 +2869,42 @@ func editorRegressionTests() {
   msg_4(fm, "createDirectoryAtPath:withIntermediateDirectories:attributes:error:", nsString(pickerRoot + "/nested"), 1, 0, 0)
   writeDocument(pickerRoot + "/alpha.txt", nsString("ALPHA"))
   writeDocument(pickerRoot + "/nested/inside.txt", nsString("NESTED"))
+  // NSOutlineView tracks expansion by item hash; lazy loading must not change it.
+  let root = explorerNode(pickerRoot, "Explorer regression", 1)
+  let rootHash = msg(root, "hash")
+  let rootChildren = explorerChildren(root)
+  regressionAssert(msg(root, "hash") == rootHash, "loading children preserves explorer item hash")
+  regressionAssert(cocoaArrayCount(rootChildren) == 2, "explorer lists folder and file")
+  regressionAssert(msg_1(explorerChildren(root), "isEqual:", rootChildren) == 1, "explorer reuses cached children")
+  let tree = explorerView(win)
+  let treeClass = cocoaClassNew("BrainExplorerRegression")
+  cocoaClassAddMethod(treeClass, "outlineView:numberOfChildrenOfItem:", funcptr(outlineChildren), "q@:@@")
+  cocoaClassAddMethod(treeClass, "outlineView:child:ofItem:", funcptr(outlineChild), "@@:@q@")
+  cocoaClassAddMethod(treeClass, "outlineView:isItemExpandable:", funcptr(outlineExpandable), "c@:@@")
+  cocoaClassAddMethod(treeClass, "outlineView:objectValueForTableColumn:byItem:", funcptr(outlineValue), "@@:@@@")
+  cocoaClassRegister(treeClass)
+  let treeData = cocoaNew(treeClass)
+  cocoaSetAssocKey(treeData, "root", root)
+  cocoaSetDataSource(tree, treeData)
+  msg(tree, "reloadData")
+  msg_1(tree, "expandItem:", root)
+  regressionAssert(msg(tree, "numberOfRows") == 3, "root expands")
+  let nested = cocoaArrayGet(rootChildren, 0)
+  let cycle = 0
+  while cycle < 3 {
+    msg_1(tree, "expandItem:", nested)
+    regressionAssert(msg_1(tree, "isItemExpanded:", nested) == 1, "nested folder expands repeatedly")
+    regressionAssert(msg(tree, "numberOfRows") == 4, "expanded folder reveals file")
+    msg_1(tree, "collapseItem:", nested)
+    regressionAssert(msg_1(tree, "isItemExpanded:", nested) == 0, "nested folder collapses repeatedly")
+    regressionAssert(msg(tree, "numberOfRows") == 3, "collapsed folder hides file")
+    cycle = cycle + 1
+  }
+  msg_1(tree, "collapseItem:", root)
+  regressionAssert(msg(tree, "numberOfRows") == 1, "workspace root collapses")
+  msg_1(tree, "setDataSource:", 0)
+  msg(treeData, "release")
+  kp("PASS: stable explorer identity, repeated folder expansion/collapse, root collapse")
   cocoaSetAssocKey(app, "brain.dir", nsString(pickerRoot))
   pickerOpen(0)
   regressionAssert(cocoaArrayCount(cocoaGetAssocKey(app, "brain.picker.source")) == 2, "picker indexes nested files")
