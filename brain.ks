@@ -226,6 +226,50 @@ func gridNew(cols, rows) {
     emit grid + _fill1(total) + _fill1(total) + "|0,0,257,0,0,257,0,0,0,0,0,0,0,1,0,0,0" + fromCharCode(1) + fromCharCode(1)
 }
 
+// Resize both screen planes without discarding the shell or its terminal modes.
+func stemResizePlanes(planes, oldCols, oldRows, cols, rows) {
+  let oldTotal = oldCols * oldRows
+  let grid = sbNew()  let fg = sbNew()  let bg = sbNew()
+  let r = 0
+  while r < rows {
+    let keep = 0
+    if r < oldRows { keep = oldCols  if keep > cols { keep = cols } }
+    let base = r * oldCols
+    if keep > 0 {
+      grid = sbAppend(grid, substring(planes, base * 5, (base + keep) * 5))
+      fg = sbAppend(fg, substring(planes, oldTotal * 5 + base, oldTotal * 5 + base + keep))
+      bg = sbAppend(bg, substring(planes, oldTotal * 6 + base, oldTotal * 6 + base + keep))
+    }
+    if keep < cols {
+      grid = sbAppend(grid, _blankRow(cols - keep))
+      fg = sbAppend(fg, _fill1(cols - keep))
+      bg = sbAppend(bg, _fill1(cols - keep))
+    }
+    r = r + 1
+  }
+  emit sbToString(grid) + sbToString(fg) + sbToString(bg)
+}
+func stemResizeGrid(state, oldCols, oldRows, cols, rows) {
+  let tailFull = substring(state, 7 * oldCols * oldRows + 1, len(state))
+  let boundary = indexOf(tailFull, fromCharCode(1))
+  let tail = substring(tailFull, 0, boundary)
+  let remainder = substring(tailFull, boundary + 1, len(tailFull))
+  let saved = substring(remainder, indexOf(remainder, fromCharCode(1)) + 1, len(remainder))
+  if len(saved) > 0 { saved = stemResizePlanes(saved, oldCols, oldRows, cols, rows) }
+  let resized = ""
+  let i = 0
+  while i < 17 {
+    let value = _cf(tail, i)
+    if i == 0 || i == 3 || i == 11 { value = _clamp(value, 0, rows - 1) }
+    if i == 1 || i == 4 || i == 12 { value = _clamp(value, 0, cols - 1) }
+    if i == 6 { value = 0 }
+    if i > 0 { resized = resized + "," }
+    resized = resized + value
+    i = i + 1
+  }
+  emit stemResizePlanes(state, oldCols, oldRows, cols, rows) + "|" + resized + fromCharCode(1) + fromCharCode(1) + saved
+}
+
 // gridFeed(state, s, cols, rows) — process byte string s against the packed
 // state (cursor/erase/colour/scroll), return the new packed state.
 func gridFeed(state, s, cols, rows) {
@@ -739,7 +783,12 @@ func isCsiFinal(ch) { emit indexOf("@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghij
 
 // Raw key -> pty (arrows -> ESC[ABCD).
 func onKey(self, cmd, event) {
-  let m = cocoaNumberVal(cocoaGetAssocKey(appH(), "stem.master"))
+  if bitAnd(msg(event, "modifierFlags"), 1048576) != 0 {
+    if msg(msg(event, "charactersIgnoringModifiers"), "UTF8String") == "v" { onTerminalPaste(self, cmd, self) }
+    emit "1"
+  }
+  let m = brainFlag("stem.master", 0 - 1)
+  if m < 0 { emit "1" }
   let esc = fromCharCode(27)
   let kc = msg(event, "keyCode")
   let seq = ""
@@ -747,8 +796,55 @@ func onKey(self, cmd, event) {
   if kc == 125 { seq = esc + "[B" }
   if kc == 124 { seq = esc + "[C" }
   if kc == 123 { seq = esc + "[D" }
+  if kc == 115 { seq = esc + "[H" }
+  if kc == 119 { seq = esc + "[F" }
+  if kc == 117 { seq = esc + "[3~" }
+  if kc == 116 { seq = esc + "[5~" }
+  if kc == 121 { seq = esc + "[6~" }
   if seq == "" { seq = msg(msg(event, "characters"), "UTF8String") }
   fdWrite(m, seq, len(seq))
+}
+
+func onTerminalPaste(self, cmd, sender) {
+  let master = brainFlag("stem.master", 0 - 1)
+  if master < 0 { emit "1" }
+  let text = msg_1(msg(cls("NSPasteboard"), "generalPasteboard"), "stringForType:", nsString("public.utf8-plain-text"))
+  if text == 0 { emit "1" }
+  let bytes = msg(text, "UTF8String")
+  let state = cocoaGetAssocKey(appH(), "stem.grid")
+  if state != 0 {
+    if gridPaste(msg(state, "UTF8String"), brainFlag("stem.cols", 112), brainFlag("stem.rows", 14)) == 1 {
+      bytes = fromCharCode(27) + "[200~" + bytes + fromCharCode(27) + "[201~"
+    }
+  }
+  fdWrite(master, bytes, len(bytes))
+  emit "1"
+}
+func terminalValidate(self, cmd, item) {
+  let action = msg(item, "action")
+  emit action == sel("copy:") || action == sel("selectAll:") || action == sel("paste:")
+}
+func stemTerminalView(win) {
+  let c = objc_allocateClassPair(cls("NSTextView"), "BrainStemTerminal", 0)
+  cocoaClassAddMethod(c, "keyDown:", funcptr(onKey), "v@:@")
+  cocoaClassAddMethod(c, "paste:", funcptr(onTerminalPaste), "v@:@")
+  cocoaClassAddMethod(c, "validateMenuItem:", funcptr(terminalValidate), "c@:@")
+  cocoaClassAddMethod(c, "validateUserInterfaceItem:", funcptr(terminalValidate), "c@:@")
+  cocoaClassAddMethod(c, "acceptsFirstResponder", funcptr(acceptsFR), "c@:")
+  cocoaClassRegister(c)
+  let scroll = msg_frame(msg(cls("NSScrollView"), "alloc"), "initWithFrame:", 0, 0, 940, 246)
+  msg_1(scroll, "setHasVerticalScroller:", 1)
+  msg_1(scroll, "setHasHorizontalScroller:", 1)
+  msg_1(scroll, "setBorderType:", 0)
+  let term = msg_frame(msg(c, "alloc"), "initWithFrame:", 0, 0, 940, 246)
+  msg_1(term, "setRichText:", 0)
+  msg_1(term, "setEditable:", 0)
+  msg_1(term, "setSelectable:", 1)
+  cocoaTVNoWrap(term)
+  msg_d2(term, "setTextContainerInset:", 5, 5)
+  msg_1(scroll, "setDocumentView:", term)
+  msg_1(msg(win, "contentView"), "addSubview:", scroll)
+  emit term
 }
 
 // xterm-256 cube channel level (0->0, 1..5 -> 95,135,175,215,255).
@@ -818,7 +914,9 @@ func sgrIndex(body) {
 func appendRunTo(acc, text, fg, bg, font) {
   if len(text) == 0 { emit "1" }
   let start = msg(acc, "length")
-  msg_1(acc, "appendAttributedString:", msg_1(msg(cls("NSAttributedString"), "alloc"), "initWithString:", nsString(text)))
+  let fragment = msg_1(msg(cls("NSAttributedString"), "alloc"), "initWithString:", nsString(text))
+  msg_1(acc, "appendAttributedString:", fragment)
+  msg(fragment, "release")
   let span = msg(acc, "length") - start
   msg_4(acc, "addAttribute:value:range:", nsString("NSColor"), fg, start, span)
   msg_4(acc, "addAttribute:value:range:", nsString("NSFont"), font, start, span)
@@ -901,7 +999,7 @@ func renderSnapshot(snap, deflt, font, cr, cc) {
       }
     }
   }
-  emit acc
+  emit msg(acc, "autorelease")
 }
 
 func defaultConfig() {
@@ -2379,8 +2477,18 @@ func installLayout(win, table, editor, term, keys) {
   let minimap = cocoaCustomView(win, mc, 767, 0, 62, 466)
   moveView(minimap, editPane, 767, 0, 62, 466, 17)
   cocoaSetAssocKey(app, "brain.minimap", minimap)
-  moveView(msg(term, "enclosingScrollView"), termPane, 0, 0, 829, 199, 18)
-  moveView(keys, termPane, 0, 0, 829, 199, 18)
+  themeSurface(termPane, themeCanvas(), 0)
+  let termHeader = cocoaPlainLabel(win, "  STEM TERMINAL  /  zsh", 0, 174, 829, 18)
+  moveView(termHeader, termPane, 0, 174, 829, 18, 10)
+  cocoaSetFont(termHeader, cocoaMonoFont(11))
+  cocoaSetTextColor(termHeader, cocoaRGB(164, 166, 174))
+  let hideTerminal = cocoaButton(win, "×", 795, 172, 28, 26)
+  moveView(hideTerminal, termPane, 795, 172, 28, 26, 9)
+  msg_1(hideTerminal, "setBordered:", 0)
+  msg_1(hideTerminal, "setToolTip:", nsString("Hide Terminal (⌘J)"))
+  cocoaSetButtonTextColor(hideTerminal, themeText())
+  cocoaOnClickKeyed(hideTerminal, "hide-stem-terminal", funcptr(onToggleTerminal))
+  moveView(msg(term, "enclosingScrollView"), termPane, 0, 0, 829, 171, 18)
   let status = cocoaPlainLabel(win, "  Ln 1, Col 1      TEXT      0 chars", 0, 0, 1040, 22)
   cocoaSetAssocKey(app, "brain.status", status)
   msg_1(status, "setDrawsBackground:", 1)
@@ -2393,8 +2501,8 @@ func installLayout(win, table, editor, term, keys) {
   cocoaSetAssocKey(app, "brain.sidepane", side)
   cocoaSetAssocKey(app, "brain.termpane", termPane)
   cocoaSetAssocKey(app, "brain.tabbar", tabs)
-  cocoaSetAssocKey(app, "brain.terminal", cocoaNumber(0))
-  msg_1(termPane, "setHidden:", 1)
+  cocoaSetAssocKey(app, "brain.terminal", cocoaNumber(1 - storeEdition()))
+  msg_1(termPane, "setHidden:", storeEdition())
   msg(split, "adjustSubviews")
   msg(vertical, "adjustSubviews")
   emit "1"
@@ -2408,12 +2516,22 @@ func onToggleSidebar(self, cmd, sender) {
   emit "1"
 }
 func onToggleTerminal(self, cmd, sender) {
+  if storeEdition() == 1 { emit "1" }
   let v = brainFlag("brain.terminal", 0)
   let nv = 0
   if v == 0 { nv = 1 }
   cocoaSetAssocKey(appH(), "brain.terminal", cocoaNumber(nv))
   relayout()
-  msg_1(sender, "setState:", nv)
+  if nv == 1 {
+    let split = cocoaGetAssocKey(appH(), "brain.vsplit")
+    let editScroll = msg(cocoaGetAssocKey(appH(), "brain.editor"), "enclosingScrollView")
+    let termScroll = cocoaGetAssocKey(appH(), "brain.termsv")
+    let position = msgPointY(editScroll, "contentSize", 0) + msgPointY(termScroll, "contentSize", 0) + 28 - 220
+    if position < 120 { position = 120 }
+    // CGFloat position uses d0; divider index 0 uses x2.
+    msg_rectp(split, "setPosition:ofDividerAtIndex:", position, 0, 0, 0, 0)
+  }
+  if sender != 0 { if msg_1(sender, "isKindOfClass:", cls("NSMenuItem")) == 1 { msg_1(sender, "setState:", nv) } }
   let focus = cocoaGetAssocKey(appH(), "brain.editor")
   if nv == 1 { focus = cocoaGetAssocKey(appH(), "brain.kview") }
   cocoaMakeFirstResponder(cocoaGetAssocKey(appH(), "brain.win"), focus)
@@ -2477,6 +2595,8 @@ func toolbarIDs(self, cmd, toolbar) {
     cocoaArrayAdd(items, nsString("build"))
     cocoaArrayAdd(items, nsString("NSToolbarSpaceItem"))
     cocoaArrayAdd(items, nsString("run"))
+    cocoaArrayAdd(items, nsString("NSToolbarSpaceItem"))
+    cocoaArrayAdd(items, nsString("terminal"))
   }
   emit items
 }
@@ -2488,6 +2608,7 @@ func toolbarItem(self, cmd, toolbar, identifier, inserting) {
   if name == "save" { title = "Save"  symbol = "square.and.arrow.down"  action = "toolbarSave:" }
   if name == "build" { title = "Build"  symbol = "hammer"  action = "toolbarBuild:" }
   if name == "run" { title = "Run"  symbol = "play.fill"  action = "toolbarRun:" }
+  if name == "terminal" { title = "Stem Terminal"  symbol = "terminal"  action = "toggleTerminal:" }
   if name == "windowExit" { title = "Exit"  symbol = "xmark"  action = "windowExit:" }
   if name == "windowMinimize" { title = "Minimize"  symbol = "minus"  action = "windowMinimize:" }
   if name == "windowMaximize" { title = "Maximize"  symbol = "arrow.up.left.and.arrow.down.right"  action = "windowMaximize:" }
@@ -2774,6 +2895,16 @@ func regressionAssert(ok, message) {
 }
 // Native regression mode uses the same document functions as the application.
 func editorRegressionTests() {
+  let esc = fromCharCode(27)
+  let terminalState = gridFeed(gridNew(12, 3), "MAIN 🦋" + esc + "[?2004h" + esc + "[?1049hALT", 12, 3)
+  terminalState = stemResizeGrid(terminalState, 12, 3, 18, 5)
+  regressionAssert(indexOf(gridRender(terminalState, 18, 5), "ALT") >= 0, "Stem resize retains alternate screen")
+  regressionAssert(gridPaste(terminalState, 18, 5) == 1, "Stem resize retains bracketed paste")
+  terminalState = gridFeed(terminalState, esc + "[?1049l", 18, 5)
+  regressionAssert(indexOf(gridRender(terminalState, 18, 5), "MAIN 🦋") >= 0, "Stem resize retains main screen and Unicode")
+  terminalState = stemResizeGrid(terminalState, 18, 5, 8, 2)
+  regressionAssert(indexOf(gridRender(terminalState, 8, 2), "MAIN 🦋") >= 0, "Stem shrink retains visible text")
+  kp("PASS: Stem grid resize, alternate screen, bracketed paste, Unicode")
   let app = cocoaInit()
   let win = cocoaWindow(app, "Regression", 600, 400)
   let editor = allocInit("NSTextView")
@@ -3039,19 +3170,15 @@ just run {
   msg_1(editor, "setAllowsUndo:", 1)
   msg_1(editor, "setUsesFindBar:", 1)
 
-  let term = cocoaScrollText(win, 0, 0, 940, 246)
+  let term = stemTerminalView(win)
   msg_1(term, "setEditable:", 0)
-  msg_1(term, "setSelectable:", 0)
+  msg_1(term, "setSelectable:", 1)
   let tmono = cocoaFontFamily(cocoaMonoFont(12), "JetBrainsMono Nerd Font Mono")
   cocoaSetFont(term, tmono)
   let tfg = cocoaColorNamed("whiteColor")
-  cocoaSetBg(term, cocoaRGB(16, 20, 28))
+  cocoaSetBg(term, themeCanvas())
   cocoaSetTextColor(term, tfg)
-  let kc = cocoaViewClassNew("BrainTermKeys")
-  cocoaClassAddMethod(kc, "keyDown:", funcptr(onKey), "v@:@")
-  cocoaClassAddMethod(kc, "acceptsFirstResponder", funcptr(acceptsFR), "c@:")
-  cocoaClassRegister(kc)
-  let kview = cocoaCustomView(win, kc, 0, 0, 940, 246)
+  let kview = term
   cocoaSetAssocKey(app, "stem.master", cocoaNumber(m))
   // view refs for View-menu toggles
   cocoaSetAssocKey(app, "brain.treesv", msg(table, "enclosingScrollView"))
@@ -3074,6 +3201,7 @@ just run {
   cocoaClassAddMethod(dsc, "windowExit:", funcptr(onWindowExit), "v@:@")
   cocoaClassAddMethod(dsc, "windowMinimize:", funcptr(onWindowMinimize), "v@:@")
   cocoaClassAddMethod(dsc, "windowMaximize:", funcptr(onWindowMaximize), "v@:@")
+  cocoaClassAddMethod(dsc, "toggleTerminal:", funcptr(onToggleTerminal), "v@:@")
   cocoaClassAddMethod(dsc, "toolbarOpen:", funcptr(onOpen), "v@:@")
   cocoaClassAddMethod(dsc, "toolbarSave:", funcptr(onSave), "v@:@")
   cocoaClassAddMethod(dsc, "toolbarBuild:", funcptr(onBuild), "v@:@")
@@ -3197,6 +3325,12 @@ just run {
 
   // manual loop: pump UI events + stream the pty into the terminal grid
   let ts = msg(term, "textStorage")
+  let lineStyle = allocInit("NSMutableParagraphStyle")
+  msg_d1(lineStyle, "setMinimumLineHeight:", 16)
+  msg_d1(lineStyle, "setMaximumLineHeight:", 16)
+  let metric = "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM"
+  let cellWidth = msgPointX(nsString(metric), "sizeWithAttributes:", cocoaTextAttrs(tmono, tfg)) * 1000 / 64
+  if cellWidth < 1000 { cellWidth = 7200 }
   let st = gridNew(cols, rows)
   let pending = ""
   let i = 0
@@ -3205,6 +3339,20 @@ just run {
     cocoaPumpEvents(app)
     msg(app, "updateWindows")
     pollTask()
+    let redraw = 0
+    if m >= 0 && brainFlag("brain.terminal", 0) == 1 {
+      let viewport = msg(term, "enclosingScrollView")
+      let nextCols = (msgPointX(viewport, "contentSize", 0) - 10) * 1000 / cellWidth
+      let nextRows = (msgPointY(viewport, "contentSize", 0) - 10) / 16
+      if nextCols < 4 { nextCols = 4 }
+      if nextRows < 2 { nextRows = 2 }
+      if nextCols != cols || nextRows != rows {
+        st = stemResizeGrid(st, cols, rows, nextCols, nextRows)
+        cols = nextCols  rows = nextRows
+        ptySetSize(m, rows, cols)
+        redraw = 1
+      }
+    }
     let chunk = ""
     if m >= 0 { chunk = fdRead(m, 4096) }
     if len(chunk) > 0 {
@@ -3212,9 +3360,16 @@ just run {
       let safe = gridSafeLen(buf)
       pending = substring(buf, safe, len(buf))
       st = gridFeed(st, substring(buf, 0, safe), cols, rows)
+      redraw = 1
+    }
+    if redraw == 1 {
+      cocoaSetAssocKey(app, "stem.grid", nsString(st))
+      cocoaSetAssocKey(app, "stem.cols", cocoaNumber(cols))
+      cocoaSetAssocKey(app, "stem.rows", cocoaNumber(rows))
       let curp = gridCursor(st, cols, rows)
       let ci2 = indexOf(curp, ",")
       msg_1(ts, "setAttributedString:", renderSnapshot(gridRender(st, cols, rows), tfg, tmono, toInt(substring(curp, 0, ci2)), toInt(substring(curp, ci2 + 1, len(curp)))))
+      msg_4(ts, "addAttribute:value:range:", nsString("NSParagraphStyle"), lineStyle, 0, msg(ts, "length"))
       msg_1(term, "scrollToEndOfDocument:", 0)
     }
     // auto save: every ~5s if enabled, write the current tab to disk

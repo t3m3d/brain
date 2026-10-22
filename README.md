@@ -40,8 +40,13 @@ kr kcc.ks --version         # forwards to the installed native driver
 `brain.icns` is optional. Build failures preserve the existing app. The editor
 restores kcode's charcoal palette, native toolbar, split panes, blue active tabs,
 line-number gutter, minimap, and cursor status through Objective K's Cocoa bindings.
-The app menu includes Quit (⌘Q); View → Toggle Terminal (⌘J) expands/collapses
-and focuses the terminal. Long lines scroll horizontally so gutter numbers stay
+The app menu includes Quit (⌘Q). The developer edition opens an embedded Stem
+terminal below the editor, with a real zsh shell in the project folder. The purple
+Terminal toolbar button or View → Toggle Terminal (⌘J) hides/shows it without
+restarting the shell; the panel’s × button hides it too. Terminal text supports
+selection/copy and ⌘V paste, including bracketed paste for terminal applications.
+Resizing the window or divider updates the shell’s rows and columns while
+preserving screen contents and terminal modes. Long lines scroll horizontally so gutter numbers stay
 aligned. Explorer expands folders lazily and shows nested files. Quick Open (⌘P) searches
 project paths; Command Palette (⌘⇧P) searches editor actions. New Text File
 uses ⌘N. Both pickers support Enter, Escape, and arrow keys.
