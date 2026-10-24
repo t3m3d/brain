@@ -131,3 +131,87 @@ prompt close button preserving edits, readable prompts above the fullscreen edit
 and visible native Open/Save panels. The same confirmation was visually checked
 in the sandboxed Store preview. Release acceptance still requires testing
 on additional supported macOS versions.
+
+## GitHub and Source Control verification (2026-10-23)
+
+The installed developer build reused the existing GitHub CLI login and displayed
+the account in the rounded Krypton purple box at the bottom of Explorer. The
+sidebar Open Folder action appeared in an empty workspace and disappeared after
+opening a folder. The global Open Folder menu remained available.
+
+Visible Source Control checks used a disposable local repository: changed-file
+diffs showed the expected before/after text, Stage and Unstage updated the index
+without losing working edits, Commit Staged included only the staged file, and
+Create Branch updated the current branch. No user repository was committed or
+pushed during these checks.
+
+Native regressions cover NUL-delimited Git status paths with Unicode, spaces,
+newlines and option-like filenames; staging; unborn-branch unstage; staged-only
+commit; rename source/destination handling; branch creation; and clone input
+validation. The task deadline uses NSDate comparisons because the installed
+native compiler's floating return binding did not provide a usable uptime value.
+
+Fresh browser sign-in, cloning an actual GitHub repository, and authenticated
+GitHub fetch/pull/push still require end-to-end verification. Repository, Pull
+Requests and Issues currently open GitHub browser pages. These features belong
+to the developer edition; the sandboxed Store preview remains editor-only.
+
+Native network-handler regressions now pass Fetch, Push, and fast-forward Pull
+against a disposable local bare origin and a second clone. Pull refuses unsaved
+editor contents. Branch selection refreshes after completion, and completed
+repository scans return to a changed-file summary instead of leaving
+“Running branches…” displayed. These checks do not contact GitHub.
+
+## Extension package manager (2026-10-24)
+
+The global Extensions menu opens a custom charcoal panel with rounded list
+surface, Krypton purple Add VSIX action, selection details, Remove, and Done.
+Packages are stored intact by normalized publisher/name, with an explicit
+Inactive status. This is package management; VS Code API execution and applying
+VSIX grammar/snippet/LSP contributions remain future work.
+
+Import reads only extension/package.json using macOS unzip, with argument arrays,
+a 100 MiB input limit, 1 MiB metadata limit, and 15-second deadline. It copies the
+archive into private staging before inspection, checks manifest identity, then
+moves the completed folder into place. Existing packages require replacement
+confirmation. Failed imports preserve installed packages; failed replacement
+moves restore the previous folder. No archive paths or binaries are extracted.
+Removal validates identity and uses the app-owned extension directory.
+
+Native fixture checks can run against temporary storage:
+
+```
+python3 tests/extension_fixtures.py /tmp/brain-extension-fixtures
+brain.app/Contents/MacOS/brain --extensions-test /tmp/brain-extension-fixtures
+```
+
+Fixtures cover Unicode paths, byte-preserved archives, malformed/missing/oversized
+manifests, duplicate manifests, invalid ZIPs, traversal identities, removal, and
+cancellation. The separate --self-test mode retains editor/Git regressions.
+
+Verification passed in the installed developer app: real Krypton 2.4.8 VSIX
+import, duplicate-package replacement, Escape cancelling removal, confirmed
+removal and list refresh, readable custom confirmations, popup close,
+maximize/restore, minimize, and reopening from the global menu. Native extension
+fixtures and existing editor/terminal/prompt/Explorer/Git regressions all passed.
+The package used for visual checks was removed afterward; its source VSIX remains
+in the Krypton repository. Store sandbox import still needs separate acceptance
+verification; the installed developer app was updated and its signature verified.
+
+## Command Center (2026-10-24)
+
+Reference inspection used the installed VS Code Insiders 1.144.0-insider bundle:
+its titlebar command dispatches workbench.action.quickOpenWithModes into Quick
+Access with help entries, with optional unified/AI routing depending on settings.
+The same bundle registers Quick Search with the % prefix. Microsoft's editor
+navigation documentation describes file/command/symbol/line modes and ? help:
+https://code.visualstudio.com/docs/editing/getting-started/userinterface
+https://code.visualstudio.com/docs/editing/codebasics
+
+Brain now provides native equivalents for editor navigation and quick text search,
+with no VS Code runtime dependency. File indexing and disk scanning run in bounded
+batches on the app event loop. Open buffers take precedence over on-disk copies,
+including unsaved text. UTF-16 cursor offsets match AppKit's text model.
+Declaration lookup uses common language declaration keywords; it is not semantic
+symbol resolution. Search limits and unimplemented integrations are recorded in
+FEATURES.md. Native regression coverage and visual acceptance are in progress.

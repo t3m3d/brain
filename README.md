@@ -51,6 +51,53 @@ aligned. Explorer expands folders lazily and shows nested files. Quick Open (⌘
 project paths; Command Palette (⌘⇧P) searches editor actions. New Text File
 uses ⌘N. Both pickers support Enter, Escape, and arrow keys.
 
+The developer edition includes GitHub and Source Control. The purple account box
+at the bottom of Explorer starts browser sign-in or opens Source Control when
+signed in. Install GitHub CLI (`gh`) to connect an account; an existing login is
+reused, with credentials managed by GitHub CLI. Source Control shows changed files,
+colored working/staged diffs, staging, staged-only commits, branches, fetch, push,
+and fast-forward pull. Clone accepts a GitHub OWNER/REPO or HTTPS repository URL.
+Repository, Pull Requests, and Issues open the corresponding GitHub browser pages.
+Git operations run in the background and can be cancelled. Save modified editor
+buffers before switching branches or pulling.
+
+## Command Center
+
+Click the centered toolbar search control or press **Cmd+P**. Type a file name
+or path; fuzzy matching includes open/recent files. Use `file:line:column` to
+open at a position. Prefixes switch search modes inside the same popup:
+
+| Prefix | Action |
+|---|---|
+| `>` | Find and run Brain commands (Cmd+Shift+P) |
+| `@` | Find declarations in current buffer (Cmd+Shift+O) |
+| `#` | Find declarations across workspace (Cmd+T) |
+| `:` | Go to line and optional column (Ctrl+G) |
+| `%` | Find literal text in workspace/open buffers (Cmd+Shift+F) |
+| `?` | Show and select a search mode |
+
+Use Enter to open/run, arrow keys to select, and Escape to close. Back/Forward
+buttons restore previous files and cursor positions (Ctrl+- / Ctrl+Shift+-).
+Search prefers unsaved buffers over disk contents. Indexing and scanning run
+incrementally with limits reported in the popup. Symbol lookup scans common
+language declarations; semantic language-server navigation is not included.
+Find and Replace uses Cmd+Option+F; Open Folder remains available in File menu.
+
+## Extensions
+
+Choose **Extensions → Manage Extensions…** in the macOS menu bar. The matching
+charcoal popup lists imported VSIX packages and versions. **Add VSIX…** imports a
+local package; **Remove** deletes the selected package after confirmation.
+Importing the same publisher/name offers to replace its stored version.
+
+Packages remain **Inactive**: Brain does not yet run the VS Code extension host
+or apply VSIX grammars, snippets, and language servers. The manager stores each
+archive intact under Application Support/brain/Extensions and reads only its
+manifest. It never extracts or executes packaged code. Import runs in the
+background; closing the popup cancels an unfinished import.
+
+Feature inventory: [docs/FEATURES.md](docs/FEATURES.md).
+
 ## Release work
 
 The Objective K app is a development preview. Release acceptance and remaining
@@ -62,7 +109,7 @@ brain.app/Contents/MacOS/brain --self-test # native regression checks; reliable 
 kr build_store.ks              # sandboxed editor-only preview in dist/
 ```
 
-The Store preview omits the terminal and external compiler. The full developer
+The Store preview omits the terminal, external compiler, and Git/CLI integration. The full developer
 edition remains available. Store previews use ad-hoc signing for local sandbox
 testing; they are not signed archives suitable for App Store submission.
 

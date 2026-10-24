@@ -1,6 +1,9 @@
 // brain — pure-Krypton IDE on objk: editor + real stem terminal (no Obj-C source).
 import "k:cocoa"
 import "scripts/tooling.k"
+import "source_control.k"
+import "extensions.k"
+import "command_center.k"
 import "k:objc"
 import "head:cocoa"
 import "head:objc"
@@ -1401,6 +1404,7 @@ func closeTab(idx) {
 }
 func onTabClose(self, cmd, sender) { closeTab(cocoaNumberVal(cocoaGetAssocKey(sender, "idx"))) }
 func selectTab(idx) {
+  ccRemember()
   let app = appH()
   let paths = cocoaGetAssocKey(app, "brain.tabpaths")
   let texts = cocoaGetAssocKey(app, "brain.tabtexts")
@@ -1431,6 +1435,7 @@ func selectTab(idx) {
   msg_1(cocoaGetAssocKey(app, "brain.win"), "setTitle:", nsString(baseName(msg(cocoaArrayGet(paths, idx), "UTF8String"))))
   rebuildTabs()
   refreshEditorChrome()
+  ccRemember()
   cocoaMakeFirstResponder(cocoaGetAssocKey(app, "brain.win"), editor)
   emit "1"
 }
@@ -1762,6 +1767,7 @@ func confirmAll() {
 func shouldTerminate(self, cmd, sender) {
   if cocoaGetAssocKey(appH(), "brain.promptwindow") != 0 { raiseActivePrompt()  emit 0 }
   if confirmAll() == 0 { emit 0 }
+  scCancel(0, 0, 0)
   recoveryClear()
   onStopTask(0, 0, 0)
   let pty = cocoaGetAssocKey(appH(), "brain.pty")
@@ -1990,179 +1996,6 @@ func explorerView(win) {
   emit outline
 }
 
-// Searchable file and command picker. Results keep their own immutable strings.
-func pickerRows(self, cmd, table) { emit cocoaArrayCount(cocoaGetAssocKey(appH(), "brain.picker.results")) }
-func pickerValue(self, cmd, table, column, row) { emit cocoaArrayGet(cocoaGetAssocKey(appH(), "brain.picker.results"), row) }
-func pickerFilter() {
-  let app = appH()
-  let query = msg(cocoaGetAssocKey(app, "brain.picker.input"), "stringValue")
-  let source = cocoaGetAssocKey(app, "brain.picker.source")
-  let results = cocoaArray()
-  let i = 0
-  while i < cocoaArrayCount(source) {
-    let item = cocoaArrayGet(source, i)
-    if msg(query, "length") == 0 || msg_1(item, "localizedCaseInsensitiveContainsString:", query) == 1 { cocoaArrayAdd(results, item) }
-    i = i + 1
-  }
-  cocoaSetAssocKey(app, "brain.picker.results", results)
-  let table = cocoaGetAssocKey(app, "brain.picker.table")
-  cocoaReload(table)
-  if cocoaArrayCount(results) > 0 { msg_2(table, "selectRowIndexes:byExtendingSelection:", msg_1(cls("NSIndexSet"), "indexSetWithIndex:", 0), 0) }
-  let detail = "Enter to open · ↑/↓ to select · Esc to close"
-  if brainFlag("brain.picker.mode", 0) == 1 { detail = "Enter to run command · ↑/↓ to select · Esc to close" }
-  if cocoaArrayCount(results) == 0 { detail = "No results" }
-  if brainFlag("brain.picker.mode", 0) == 0 && brainFlag("brain.workspace", 1) == 0 { detail = "Open a folder to search project files" }
-  if brainFlag("brain.picker.limited", 0) == 1 { detail = detail + " · First 20,000 project entries indexed" }
-  msg_1(cocoaGetAssocKey(app, "brain.picker.detail"), "setStringValue:", nsString(detail))
-  emit "1"
-}
-func pickerChanged(self, cmd, notification) { pickerFilter() }
-func pickerClose() {
-  msg_1(cocoaGetAssocKey(appH(), "brain.picker.window"), "orderOut:", 0)
-  let win = cocoaGetAssocKey(appH(), "brain.win")
-  msg_1(win, "makeKeyAndOrderFront:", 0)
-  cocoaMakeFirstResponder(win, cocoaGetAssocKey(appH(), "brain.editor"))
-  emit "1"
-}
-func pickerExecute(self, cmd, sender) {
-  let app = appH()
-  let results = cocoaGetAssocKey(app, "brain.picker.results")
-  let row = msg(cocoaGetAssocKey(app, "brain.picker.table"), "selectedRow")
-  if row < 0 || row >= cocoaArrayCount(results) { emit "1" }
-  let owner = msg(cocoaArrayGet(results, row), "copy")
-  let name = msg(owner, "UTF8String")
-  pickerClose()
-  if brainFlag("brain.picker.mode", 0) == 0 {
-    let root = msg(cocoaGetAssocKey(app, "brain.dir"), "UTF8String")
-    openTab(root + "/" + name)
-  } else {
-    if name == "File: New Text File" { onNew(0, 0, 0) }
-    if name == "File: Open File" { onOpen(0, 0, 0) }
-    if name == "File: Open Folder" { onOpenFolder(0, 0, 0) }
-    if name == "File: Save" { onSave(0, 0, 0) }
-    if name == "File: Save As" { onSaveAs(0, 0, 0) }
-    if name == "File: Save All" { onSaveAll(0, 0, 0) }
-    if name == "File: Revert File" { onRevert(0, 0, 0) }
-    if name == "File: Close Editor" { onClose(0, 0, 0) }
-    if name == "View: Toggle Sidebar" { onToggleSidebar(0, 0, 0) }
-    if name == "View: Toggle Terminal" { onToggleTerminal(0, 0, 0) }
-    if name == "View: Zoom In" { onZoomIn(0, 0, 0) }
-    if name == "View: Zoom Out" { onZoomOut(0, 0, 0) }
-    if name == "View: Reset Zoom" { onZoomReset(0, 0, 0) }
-    if name == "Go: Quick Open" { onQuickOpen(0, 0, 0) }
-    if name == "Run: Build File" { onBuild(0, 0, 0) }
-    if name == "Run: Run File" { onRun(0, 0, 0) }
-    if name == "Run: Stop" { onStopTask(0, 0, 0) }
-  }
-  msg(owner, "release")
-  emit "1"
-}
-func pickerSelectorEquals(command, name) {
-  let value = msg_1(cls("NSValue"), "valueWithPointer:", command)
-  emit msg_1(value, "isEqual:", msg_1(cls("NSValue"), "valueWithPointer:", sel(name)))
-}
-func pickerCommand(self, cmd, control, textView, command) {
-  if pickerSelectorEquals(command, "cancelOperation:") == 1 { pickerClose()  emit 1 }
-  if pickerSelectorEquals(command, "insertNewline:") == 1 { pickerExecute(0, 0, 0)  emit 1 }
-  let delta = 0
-  if pickerSelectorEquals(command, "moveDown:") == 1 { delta = 1 }
-  if pickerSelectorEquals(command, "moveUp:") == 1 { delta = 0 - 1 }
-  if delta != 0 {
-    let table = cocoaGetAssocKey(appH(), "brain.picker.table")
-    let count = cocoaArrayCount(cocoaGetAssocKey(appH(), "brain.picker.results"))
-    if count > 0 {
-      let row = msg(table, "selectedRow") + delta
-      if row < 0 { row = 0 }
-      if row >= count { row = count - 1 }
-      msg_2(table, "selectRowIndexes:byExtendingSelection:", msg_1(cls("NSIndexSet"), "indexSetWithIndex:", row), 0)
-      msg_1(table, "scrollRowToVisible:", row)
-    }
-    emit 1
-  }
-  emit 0
-}
-func pickerInit() {
-  let app = appH()
-  if cocoaGetAssocKey(app, "brain.picker.window") != 0 { emit "1" }
-  let panel = msg_rect(msg(cls("NSPanel"), "alloc"), "initWithContentRect:styleMask:backing:defer:", 0, 0, 620, 390, 3, 2, 0)
-  msg_1(panel, "setReleasedWhenClosed:", 0)
-  msg_1(panel, "setBackgroundColor:", themeSidebar())
-  msg_1(panel, "setCollectionBehavior:", 257)
-  msg_1(panel, "setLevel:", 3)
-  let input = cocoaTextField(panel, 16, 342, 588, 30)
-  cocoaSetFont(input, msg_d1(cls("NSFont"), "systemFontOfSize:", 15))
-  cocoaSetBg(input, themeCanvas())
-  cocoaSetTextColor(input, themeText())
-  let table = cocoaTable(panel, 16, 42, 588, 288)
-  msg_1(table, "setHeaderView:", 0)
-  msg_d1(table, "setRowHeight:", 26)
-  msg_1(table, "setBackgroundColor:", themeSidebar())
-  let detail = cocoaPlainLabel(panel, "", 16, 12, 588, 20)
-  cocoaSetTextColor(detail, cocoaRGB(164, 166, 174))
-  let c = cocoaClassNew("KcodePickerDelegate")
-  cocoaClassAddMethod(c, "numberOfRowsInTableView:", funcptr(pickerRows), "q@:@")
-  cocoaClassAddMethod(c, "tableView:objectValueForTableColumn:row:", funcptr(pickerValue), "@@:@@q")
-  cocoaClassAddMethod(c, "controlTextDidChange:", funcptr(pickerChanged), "v@:@")
-  cocoaClassAddMethod(c, "control:textView:doCommandBySelector:", funcptr(pickerCommand), "c@:@@:")
-  cocoaClassAddMethod(c, "execute:", funcptr(pickerExecute), "v@:@")
-  cocoaClassRegister(c)
-  let delegate = cocoaNew(c)
-  cocoaSetAssocKey(app, "brain.picker.delegate", delegate)
-  cocoaSetDataSource(table, delegate)
-  msg_1(input, "setDelegate:", delegate)
-  msg_1(table, "setTarget:", delegate)
-  msg_1(table, "setDoubleAction:", sel("execute:"))
-  cocoaSetAssocKey(app, "brain.picker.window", panel)
-  cocoaSetAssocKey(app, "brain.picker.input", input)
-  cocoaSetAssocKey(app, "brain.picker.table", table)
-  cocoaSetAssocKey(app, "brain.picker.detail", detail)
-  emit "1"
-}
-func pickerOpen(mode) {
-  pickerInit()
-  let app = appH()
-  cocoaSetAssocKey(app, "brain.picker.mode", cocoaNumber(mode))
-  cocoaSetAssocKey(app, "brain.picker.limited", cocoaNumber(0))
-  let source = cocoaArray()
-  if mode == 0 && brainFlag("brain.workspace", 1) == 1 {
-    let root = msg(cocoaGetAssocKey(app, "brain.dir"), "UTF8String")
-    let enumerator = msg_1(msg(cls("NSFileManager"), "defaultManager"), "enumeratorAtPath:", nsString(root))
-    let item = msg(enumerator, "nextObject")
-    let visited = 0
-    while item != 0 && visited < 20000 {
-      let attrs = msg(enumerator, "fileAttributes")
-      let kind = msg_1(attrs, "objectForKey:", nsString("NSFileType"))
-      if msg_1(kind, "isEqualToString:", nsString("NSFileTypeDirectory")) == 1 {
-        let name = msg(item, "lastPathComponent")
-        if msg_1(name, "isEqualToString:", nsString(".git")) == 1 || msg_1(name, "isEqualToString:", nsString("node_modules")) == 1 || msg_1(name, "hasSuffix:", nsString(".app")) == 1 { msg(enumerator, "skipDescendants") }
-      } else { if msg_1(kind, "isEqualToString:", nsString("NSFileTypeRegular")) == 1 { cocoaArrayAdd(source, item) } }
-      visited = visited + 1
-      item = msg(enumerator, "nextObject")
-    }
-    if item != 0 { cocoaSetAssocKey(app, "brain.picker.limited", cocoaNumber(1)) }
-  } else { if mode == 1 {
-    let names = "File: New Text File|File: Open File|File: Open Folder|File: Save|File: Save As|File: Save All|File: Revert File|File: Close Editor|View: Toggle Sidebar|View: Zoom In|View: Zoom Out|View: Reset Zoom|Go: Quick Open"
-    if storeEdition() == 0 { names = names + "|View: Toggle Terminal|Run: Build File|Run: Run File|Run: Stop" }
-    source = msg_1(nsString(names), "componentsSeparatedByString:", nsString("|"))
-  } }
-  cocoaSetAssocKey(app, "brain.picker.source", source)
-  let panel = cocoaGetAssocKey(app, "brain.picker.window")
-  let title = "Quick Open"
-  let placeholder = "Search files by name or path"
-  if mode == 1 { title = "Command Palette"  placeholder = "Search commands" }
-  msg_1(panel, "setTitle:", nsString(title))
-  let input = cocoaGetAssocKey(app, "brain.picker.input")
-  msg_1(input, "setStringValue:", nsString(""))
-  msg_1(input, "setPlaceholderString:", nsString(placeholder))
-  pickerFilter()
-  msg(panel, "center")
-  cocoaShow(panel, app)
-  cocoaMakeFirstResponder(panel, input)
-  emit "1"
-}
-func onQuickOpen(self, cmd, sender) { pickerOpen(0) }
-func onCommandPalette(self, cmd, sender) { pickerOpen(1) }
-
 // ── File-menu handlers ──────────────────────────────────────────────────
 func newUntitled(ext) {
   let app = appH()
@@ -2225,6 +2058,9 @@ func loadFolder(d) {
   cocoaSetAssocKey(ds, "root", root)
   cocoaSetAssocKey(ds, "dir", nsString(d))
   cocoaSetAssocKey(app, "brain.dir", nsString(d))
+  scWorkspaceChanged()
+  ccTitle()
+  pickerClose()
   let outline = cocoaGetAssocKey(app, "brain.table")
   cocoaReload(outline)
   msg_1(outline, "expandItem:", root)
@@ -2456,7 +2292,7 @@ func installLayout(win, table, editor, term, keys) {
   msg_1(openFolder, "setHidden:", brainFlag("brain.workspace", 1))
   cocoaSetAssocKey(app, "brain.openfolder", openFolder)
   let treesv = msg(table, "enclosingScrollView")
-  moveView(treesv, side, 0, 0, 210, 672, 18)
+  moveView(treesv, side, 0, 0, 210, 622, 18)
   msg(openFolder, "removeFromSuperview")
   msg_1(side, "addSubview:", openFolder)
   msg_1(table, "setHeaderView:", 0)
@@ -2580,13 +2416,14 @@ func onExitFullscreen(self, cmd, notification) {
 }
 func toolbarIDs(self, cmd, toolbar) {
   let items = cocoaArray()
-  cocoaArrayAdd(items, nsString("NSToolbarFlexibleSpaceItem"))
   cocoaArrayAdd(items, nsString("windowExit"))
   cocoaArrayAdd(items, nsString("NSToolbarSpaceItem"))
   cocoaArrayAdd(items, nsString("windowMinimize"))
   cocoaArrayAdd(items, nsString("NSToolbarSpaceItem"))
   cocoaArrayAdd(items, nsString("windowMaximize"))
-  cocoaArrayAdd(items, nsString("NSToolbarSpaceItem"))
+  cocoaArrayAdd(items, nsString("NSToolbarFlexibleSpaceItem"))
+  cocoaArrayAdd(items, nsString("commandCenter"))
+  cocoaArrayAdd(items, nsString("NSToolbarFlexibleSpaceItem"))
   cocoaArrayAdd(items, nsString("open"))
   cocoaArrayAdd(items, nsString("NSToolbarSpaceItem"))
   cocoaArrayAdd(items, nsString("save"))
@@ -2597,11 +2434,14 @@ func toolbarIDs(self, cmd, toolbar) {
     cocoaArrayAdd(items, nsString("run"))
     cocoaArrayAdd(items, nsString("NSToolbarSpaceItem"))
     cocoaArrayAdd(items, nsString("terminal"))
+    cocoaArrayAdd(items, nsString("NSToolbarSpaceItem"))
+    cocoaArrayAdd(items, nsString("sourceControl"))
   }
   emit items
 }
 func toolbarItem(self, cmd, toolbar, identifier, inserting) {
   let name = msg(identifier, "UTF8String")
+  if name == "commandCenter" { emit ccToolbar(self, identifier) }
   let title = "Open"
   let symbol = "folder"
   let action = "toolbarOpen:"
@@ -2612,6 +2452,7 @@ func toolbarItem(self, cmd, toolbar, identifier, inserting) {
   if name == "windowExit" { title = "Exit"  symbol = "xmark"  action = "windowExit:" }
   if name == "windowMinimize" { title = "Minimize"  symbol = "minus"  action = "windowMinimize:" }
   if name == "windowMaximize" { title = "Maximize"  symbol = "arrow.up.left.and.arrow.down.right"  action = "windowMaximize:" }
+  if name == "sourceControl" { title = "GitHub / Source Control"  symbol = "point.3.connected.trianglepath.dotted"  action = "sourceControl:" }
   let item = msg_1(msg(cls("NSToolbarItem"), "alloc"), "initWithItemIdentifier:", identifier)
   msg_1(item, "setLabel:", nsString(title))
   msg_1(item, "setToolTip:", nsString(title))
@@ -2895,6 +2736,7 @@ func regressionAssert(ok, message) {
 }
 // Native regression mode uses the same document functions as the application.
 func editorRegressionTests() {
+  ccSet("recent-override", cocoaArray())
   let esc = fromCharCode(27)
   let terminalState = gridFeed(gridNew(12, 3), "MAIN 🦋" + esc + "[?2004h" + esc + "[?1049hALT", 12, 3)
   terminalState = stemResizeGrid(terminalState, 12, 3, 18, 5)
@@ -3046,18 +2888,21 @@ func editorRegressionTests() {
   regressionAssert(pickerCommand(0, 0, input, 0, sel("insertNewline:")) == 1, "picker handles Enter")
   regressionAssert(cocoaTVGetString(editor) == "NESTED", "picker opens selected file")
   pickerOpen(1)
-  msg_1(input, "setStringValue:", nsString("zoom in"))
+  msg_1(input, "setStringValue:", nsString(">zoom in"))
   pickerFilter()
   regressionAssert(cocoaArrayCount(cocoaGetAssocKey(app, "brain.picker.results")) == 1, "command filtering")
   regressionAssert(pickerCommand(0, 0, input, 0, sel("cancelOperation:")) == 1, "picker handles Escape")
   kp("PASS: canonical path identity, binary rejection, Quick Open, Command Palette, picker keyboard controls")
 
+  commandCenterRegression(pickerRoot)
+  sourceControlRegression()
   kp("PASS: tab isolation, background close, unique identity, undo isolation, switch guard, Unicode highlighting, atomic save, path lifetime")
   emit "1"
 }
 
 just run {
   if argCount() > 0 { if arg(0) == "--self-test" { editorRegressionTests()  exit(0) } }
+  if argCount() > 1 { if arg(0) == "--extensions-test" { extensionsRegression(arg(1))  exit(0) } }
   let dir = projDir()
   if storeEdition() == 1 && argCount() == 0 {
     let fm = msg(cls("NSFileManager"), "defaultManager")
@@ -3201,6 +3046,10 @@ just run {
   cocoaClassAddMethod(dsc, "windowExit:", funcptr(onWindowExit), "v@:@")
   cocoaClassAddMethod(dsc, "windowMinimize:", funcptr(onWindowMinimize), "v@:@")
   cocoaClassAddMethod(dsc, "windowMaximize:", funcptr(onWindowMaximize), "v@:@")
+  cocoaClassAddMethod(dsc, "commandCenter:", funcptr(onQuickOpen), "v@:@")
+  cocoaClassAddMethod(dsc, "navigateBack:", funcptr(ccBack), "v@:@")
+  cocoaClassAddMethod(dsc, "navigateForward:", funcptr(ccForward), "v@:@")
+  cocoaClassAddMethod(dsc, "sourceControl:", funcptr(onSourceControl), "v@:@")
   cocoaClassAddMethod(dsc, "toggleTerminal:", funcptr(onToggleTerminal), "v@:@")
   cocoaClassAddMethod(dsc, "toolbarOpen:", funcptr(onOpen), "v@:@")
   cocoaClassAddMethod(dsc, "toolbarSave:", funcptr(onSave), "v@:@")
@@ -3235,11 +3084,13 @@ just run {
   let toolbar = msg_1(msg(cls("NSToolbar"), "alloc"), "initWithIdentifier:", nsString("kcodeToolbar"))
   msg_1(toolbar, "setDelegate:", ds)
   msg_1(toolbar, "setDisplayMode:", 2)
+  msg_1(toolbar, "setCenteredItemIdentifier:", nsString("commandCenter"))
   msg_1(win, "setToolbar:", toolbar)
   msg_1(win, "setToolbarStyle:", 3)
 
   cocoaSetAssocKey(app, "brain.editor", editor)
   cocoaSetAssocKey(app, "brain.dir", nsString(dir))
+  ccTitle()
   cocoaSetAssocKey(app, "brain.win", win)
   cocoaSetAssocKey(app, "brain.tabbtns", cocoaArray())
   cocoaSetAssocKey(app, "brain.tabpaths", cocoaArray())
@@ -3248,6 +3099,7 @@ just run {
   cocoaSetAssocKey(app, "brain.savedtexts", cocoaArray())
   cocoaSetAssocKey(app, "brain.curtab", cocoaNumber(0 - 1))
   installLayout(win, table, editor, term, kview)
+  if storeEdition() == 0 { scInstall(win, msg(msg(editor, "enclosingScrollView"), "superview")) }
   installRuler(editor)
   let clip = msg(msg(editor, "enclosingScrollView"), "contentView")
   msg_1(clip, "setPostsBoundsChangedNotifications:", 1)
@@ -3259,7 +3111,7 @@ just run {
   cocoaMenuItem(fileMenu, "New Window", "N", funcptr(onNewWindow))
   cocoaMenuSeparator(fileMenu)
   cocoaMenuItem(fileMenu, "Open", "o", funcptr(onOpen))
-  cocoaMenuItem(fileMenu, "Open Folder", "O", funcptr(onOpenFolder))
+  cocoaMenuItem(fileMenu, "Open Folder", "", funcptr(onOpenFolder))
   cocoaMenuItem(fileMenu, "Open Workspace from File", "", funcptr(onOpenWorkspace))
   let recentMenu = cocoaSubmenuIn(fileMenu, "Open Recent")
   cocoaSetAssocKey(app, "brain.recentmenu", recentMenu)
@@ -3291,7 +3143,9 @@ just run {
   cocoaMenuItemSelTag(editMenu, "Find", "f", "performTextFinderAction:", 1)
   cocoaMenuItemSelTag(editMenu, "Find Next", "g", "performTextFinderAction:", 2)
   cocoaMenuItemSelTag(editMenu, "Find Previous", "G", "performTextFinderAction:", 3)
-  cocoaMenuItemSelTag(editMenu, "Find and Replace", "F", "performTextFinderAction:", 12)
+  cocoaMenuItemSelTag(editMenu, "Find and Replace", "f", "performTextFinderAction:", 12)
+  let replaceMenuItem = msg(msg(editMenu, "itemArray"), "lastObject")
+  msg_1(replaceMenuItem, "setKeyEquivalentModifierMask:", 1572864)
   let viewMenu = cocoaMenuAdd(bar, "View")
   cocoaMenuItem(viewMenu, "Command Palette", "P", funcptr(onCommandPalette))
   cocoaMenuItem(viewMenu, "Quick Open", "p", funcptr(onQuickOpen))
@@ -3302,7 +3156,29 @@ just run {
   cocoaMenuItem(viewMenu, "Zoom In", "=", funcptr(onZoomIn))
   cocoaMenuItem(viewMenu, "Zoom Out", "-", funcptr(onZoomOut))
   cocoaMenuItem(viewMenu, "Reset Zoom", "0", funcptr(onZoomReset))
+  let goMenu = cocoaMenuAdd(bar, "Go")
+  cocoaMenuItem(goMenu, "Go to File…", "", funcptr(onQuickOpen))
+  cocoaMenuItem(goMenu, "Go to Line…", "g", funcptr(onGoLine))
+  let goLine = msg(msg(goMenu, "itemArray"), "lastObject")
+  msg_1(goLine, "setKeyEquivalentModifierMask:", 262144)
+  cocoaMenuItem(goMenu, "Go to Symbol in File…", "O", funcptr(onGoSymbol))
+  cocoaMenuItem(goMenu, "Go to Symbol in Workspace…", "t", funcptr(onWorkspaceSymbol))
+  cocoaMenuItem(goMenu, "Quick Search in Files…", "F", funcptr(onQuickSearch))
+  cocoaMenuSeparator(goMenu)
+  cocoaMenuItem(goMenu, "Back", "-", funcptr(ccBack))
+  let backMenu = msg(msg(goMenu, "itemArray"), "lastObject")
+  msg_1(backMenu, "setKeyEquivalentModifierMask:", 262144)
+  cocoaMenuItem(goMenu, "Forward", "-", funcptr(ccForward))
+  let forwardMenu = msg(msg(goMenu, "itemArray"), "lastObject")
+  msg_1(forwardMenu, "setKeyEquivalentModifierMask:", 393216)
+  let extensionsMenu = cocoaMenuAdd(bar, "Extensions")
+  cocoaMenuItem(extensionsMenu, "Manage Extensions…", "", funcptr(onExtensions))
+  cocoaMenuItem(extensionsMenu, "Add Extension from VSIX…", "", funcptr(onAddExtension))
   if storeEdition() == 0 {
+    let gitMenu = cocoaMenuAdd(bar, "GitHub")
+    cocoaMenuItem(gitMenu, "Source Control", "", funcptr(onSourceControl))
+    cocoaMenuItem(gitMenu, "Sign In", "", funcptr(scAuthenticate))
+    cocoaMenuItem(gitMenu, "Refresh", "", funcptr(scRefreshAccount))
     let runMenu = cocoaMenuAdd(bar, "Run")
     cocoaMenuItem(runMenu, "Build File", "", funcptr(onBuild))
     cocoaMenuItem(runMenu, "Run File", "r", funcptr(onRun))
@@ -3322,6 +3198,7 @@ just run {
   cocoaShow(win, app)
   cocoaMakeFirstResponder(win, editor)
   cocoaFinishLaunching(app)
+  if storeEdition() == 0 { scAccount() }
 
   // manual loop: pump UI events + stream the pty into the terminal grid
   let ts = msg(term, "textStorage")
@@ -3339,6 +3216,9 @@ just run {
     cocoaPumpEvents(app)
     msg(app, "updateWindows")
     pollTask()
+    scPoll()
+    exPoll()
+    ccPoll()
     let redraw = 0
     if m >= 0 && brainFlag("brain.terminal", 0) == 1 {
       let viewport = msg(term, "enclosingScrollView")
