@@ -215,3 +215,72 @@ including unsaved text. UTF-16 cursor offsets match AppKit's text model.
 Declaration lookup uses common language declaration keywords; it is not semantic
 symbol resolution. Search limits and unimplemented integrations are recorded in
 FEATURES.md. Native regression coverage and visual acceptance are in progress.
+
+## Icon and repeated Find opening (2026-10-25)
+
+The supplied root artwork is named codebrain.png. make_icon.ks now packages it
+with macOS sips/iconutil into packaging/brain.icns and the 1024px Store icon.
+The installed app received the new icon without replacing its existing executable;
+its signature and icon container were verified, and the user confirmed appearance.
+
+Repeated Cmd+F opening was reported to leave a blank gray native popup. The first
+replacement used a permanent, reserved header above the document, centered
+beneath the tabs. The command routes no longer invoke the native Find window.
+Native probes passed literal matching, UTF-16 offsets following an emoji, and
+literal dollar-sign replacement.
+
+On 2026-10-26 the rebuilt app was installed into /Applications/brain.app. Its
+signature verified and installed executable matched the build byte for byte.
+Visual acceptance passed: header stays above the document, six Cmd+F/Escape
+cycles remain responsive, Next selects the second of two matches, and Replace
+All changes both matches. Temporary test text was removed afterward.
+
+The complete self-test is not yet green: Command Center's Back navigation
+canonical-file-identity assertion still fails. The Find group now runs before
+that assertion and passes. Isolated navigation probes pass, but that does not
+resolve the full-suite failure.
+
+The subsequent layout revision keeps only Command Center permanently visible,
+directly before the top-right action buttons. It uses the same flipped holder
+and vertical center as those actions, without macOS's separate centered-item
+placement. Find opens with Cmd+F and Escape collapses its reserved header to
+zero height, avoiding a second persistent search box. Replace remains on demand.
+Installed and visually verified on 2026-10-26: a single permanent box aligned
+with the action row; Cmd+F shows Find and Escape removes its controls again.
+The installed executable matches the rebuilt app and its signature verifies.
+
+## Shared toolbar search field (2026-10-26)
+
+The follow-up replaces the toolbar search launcher with one editable field.
+Cmd+F switches that field to current-file Find; Cmd+P and command prefixes use
+the same field for Command Center. The result panel contains no search field.
+Find's reserved header contains match controls only, plus an optional replacement
+field. Escape ends the active mode, and the Find query survives mode switching.
+Regression coverage checks shared input identity, repeated Find opening/closing,
+Unicode offsets, literal replacement, and query restoration after command mode.
+
+Installed verification passed: Cmd+F edits the toolbar field and Enter advances
+through two document matches; command mode uses that same field with a visible
+results-only child panel; typing preserves the > prefix and Enter executes Zoom
+In. Find restores its prior query after commands. Five further Find/Escape cycles
+remain responsive. Test text was removed and zoom reset. The native shared-Find
+regressions pass; the pre-existing Back canonical-file assertion remains failing.
+The installed signature verifies and its executable matches the final build.
+
+## Terminal heading and File Info layout (2026-10-28)
+
+Removed the redundant STEM TERMINAL / zsh label. Rebuilt and installed the app;
+its signature verifies and installed executable matches the build. Visual checks
+confirm the heading is absent, the terminal remains visible, and File Info text
+wraps within its pane. A pending custom split-resize delegate caused a redraw
+regression and was removed; standard native split layout is retained.
+
+The active development checkout remains /Users/t3m3d/Documents/GitHub/kcode.
+The separately inspected brain-ide checkout points to the same t3m3d/brain remote;
+its HEAD is an ancestor of kcode HEAD and it had no unique source changes.
+No repository folders or GitHub repositories were deleted by this task.
+
+The terminal's inline × button was subsequently removed (2026-10-28). Installed
+signature and executable identity verified. UI checks confirmed the button is
+absent and terminal visibility still changes through Cmd+J, View → Toggle
+Terminal, and the toolbar terminal button. Terminal was left visible afterward.

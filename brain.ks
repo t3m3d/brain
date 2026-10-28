@@ -4,6 +4,8 @@ import "scripts/tooling.k"
 import "source_control.k"
 import "extensions.k"
 import "command_center.k"
+import "find_panel.k"
+import "file_info.k"
 import "k:objc"
 import "head:cocoa"
 import "head:objc"
@@ -2314,16 +2316,6 @@ func installLayout(win, table, editor, term, keys) {
   moveView(minimap, editPane, 767, 0, 62, 466, 17)
   cocoaSetAssocKey(app, "brain.minimap", minimap)
   themeSurface(termPane, themeCanvas(), 0)
-  let termHeader = cocoaPlainLabel(win, "  STEM TERMINAL  /  zsh", 0, 174, 829, 18)
-  moveView(termHeader, termPane, 0, 174, 829, 18, 10)
-  cocoaSetFont(termHeader, cocoaMonoFont(11))
-  cocoaSetTextColor(termHeader, cocoaRGB(164, 166, 174))
-  let hideTerminal = cocoaButton(win, "×", 795, 172, 28, 26)
-  moveView(hideTerminal, termPane, 795, 172, 28, 26, 9)
-  msg_1(hideTerminal, "setBordered:", 0)
-  msg_1(hideTerminal, "setToolTip:", nsString("Hide Terminal (⌘J)"))
-  cocoaSetButtonTextColor(hideTerminal, themeText())
-  cocoaOnClickKeyed(hideTerminal, "hide-stem-terminal", funcptr(onToggleTerminal))
   moveView(msg(term, "enclosingScrollView"), termPane, 0, 0, 829, 171, 18)
   let status = cocoaPlainLabel(win, "  Ln 1, Col 1      TEXT      0 chars", 0, 0, 1040, 22)
   cocoaSetAssocKey(app, "brain.status", status)
@@ -2340,6 +2332,8 @@ func installLayout(win, table, editor, term, keys) {
   cocoaSetAssocKey(app, "brain.terminal", cocoaNumber(1 - storeEdition()))
   msg_1(termPane, "setHidden:", storeEdition())
   msg(split, "adjustSubviews")
+  fiInstall(win, editPane)
+  infoInstall(win, split)
   msg(vertical, "adjustSubviews")
   emit "1"
 }
@@ -2423,7 +2417,7 @@ func toolbarIDs(self, cmd, toolbar) {
   cocoaArrayAdd(items, nsString("windowMaximize"))
   cocoaArrayAdd(items, nsString("NSToolbarFlexibleSpaceItem"))
   cocoaArrayAdd(items, nsString("commandCenter"))
-  cocoaArrayAdd(items, nsString("NSToolbarFlexibleSpaceItem"))
+  cocoaArrayAdd(items, nsString("NSToolbarSpaceItem"))
   cocoaArrayAdd(items, nsString("open"))
   cocoaArrayAdd(items, nsString("NSToolbarSpaceItem"))
   cocoaArrayAdd(items, nsString("save"))
@@ -2567,6 +2561,7 @@ func refreshEditorChrome() {
   msg_1(status, "setStringValue:", nsString("  Ln " + line + ", Col " + column + "      " + msg(cocoaGetAssocKey(app, "brain.lang"), "UTF8String") + "      " + msg(text, "length") + " chars"))
   msg_1(cocoaGetAssocKey(app, "brain.ruler"), "setNeedsDisplay:", 1)
   msg_1(cocoaGetAssocKey(app, "brain.minimap"), "setNeedsDisplay:", 1)
+  infoRefresh()
   emit "1"
 }
 func onEditorSelection(self, cmd, notification) { refreshEditorChrome()  emit "1" }
@@ -2894,6 +2889,8 @@ func editorRegressionTests() {
   regressionAssert(pickerCommand(0, 0, input, 0, sel("cancelOperation:")) == 1, "picker handles Escape")
   kp("PASS: canonical path identity, binary rejection, Quick Open, Command Palette, picker keyboard controls")
 
+  findRegression(win)
+  infoRegression()
   commandCenterRegression(pickerRoot)
   sourceControlRegression()
   kp("PASS: tab isolation, background close, unique identity, undo isolation, switch guard, Unicode highlighting, atomic save, path lifetime")
@@ -3013,7 +3010,7 @@ just run {
   msg_1(editor, "setAutomaticSpellingCorrectionEnabled:", 0)
   msg_1(editor, "setSmartInsertDeleteEnabled:", 0)
   msg_1(editor, "setAllowsUndo:", 1)
-  msg_1(editor, "setUsesFindBar:", 1)
+  msg_1(editor, "setUsesFindBar:", 0)
 
   let term = stemTerminalView(win)
   msg_1(term, "setEditable:", 0)
@@ -3084,7 +3081,6 @@ just run {
   let toolbar = msg_1(msg(cls("NSToolbar"), "alloc"), "initWithIdentifier:", nsString("kcodeToolbar"))
   msg_1(toolbar, "setDelegate:", ds)
   msg_1(toolbar, "setDisplayMode:", 2)
-  msg_1(toolbar, "setCenteredItemIdentifier:", nsString("commandCenter"))
   msg_1(win, "setToolbar:", toolbar)
   msg_1(win, "setToolbarStyle:", 3)
 
@@ -3140,10 +3136,10 @@ just run {
   cocoaMenuItemSel(editMenu, "Select All", "a", "selectAll:")
   cocoaMenuSeparator(editMenu)
   // NSTextFinder actions (tag = NSTextFinderAction): 1 showFind, 2 next, 3 prev, 12 showReplace
-  cocoaMenuItemSelTag(editMenu, "Find", "f", "performTextFinderAction:", 1)
-  cocoaMenuItemSelTag(editMenu, "Find Next", "g", "performTextFinderAction:", 2)
-  cocoaMenuItemSelTag(editMenu, "Find Previous", "G", "performTextFinderAction:", 3)
-  cocoaMenuItemSelTag(editMenu, "Find and Replace", "f", "performTextFinderAction:", 12)
+  cocoaMenuItem(editMenu, "Find", "f", funcptr(onFind))
+  cocoaMenuItem(editMenu, "Find Next", "g", funcptr(fiNext))
+  cocoaMenuItem(editMenu, "Find Previous", "G", funcptr(fiPrevious))
+  cocoaMenuItem(editMenu, "Find and Replace", "f", funcptr(onFindReplace))
   let replaceMenuItem = msg(msg(editMenu, "itemArray"), "lastObject")
   msg_1(replaceMenuItem, "setKeyEquivalentModifierMask:", 1572864)
   let viewMenu = cocoaMenuAdd(bar, "View")
@@ -3151,6 +3147,7 @@ just run {
   cocoaMenuItem(viewMenu, "Quick Open", "p", funcptr(onQuickOpen))
   cocoaMenuSeparator(viewMenu)
   cocoaMenuItem(viewMenu, "Toggle Sidebar", "b", funcptr(onToggleSidebar))
+  cocoaMenuItem(viewMenu, "Toggle File Info", "", funcptr(onFileInfo))
   if storeEdition() == 0 { cocoaMenuItem(viewMenu, "Toggle Terminal", "j", funcptr(onToggleTerminal)) }
   cocoaMenuSeparator(viewMenu)
   cocoaMenuItem(viewMenu, "Zoom In", "=", funcptr(onZoomIn))

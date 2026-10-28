@@ -199,7 +199,7 @@ func ccCandidates() {
   emit result
 }
 func ccCommands() {
-  let names = "File: New Text File|File: New Krypton File|File: New Window|File: Open File|File: Open Folder|File: Open Workspace|File: Save Workspace As|File: Duplicate Workspace|File: Save|File: Save As|File: Save All|File: Revert File|File: Close Editor|File: Close Window|Edit: Undo|Edit: Redo|Edit: Cut|Edit: Copy|Edit: Paste|Edit: Select All|Edit: Find|Edit: Find Next|Edit: Find Previous|Edit: Find and Replace|View: Toggle Sidebar|View: Zoom In|View: Zoom Out|View: Reset Zoom|Go: Quick Open|Go: Go to Line|Go: Symbol in File|Go: Symbol in Workspace|Go: Back|Go: Forward|Search: Quick Search|Extensions: Manage Extensions|Extensions: Add Extension from VSIX"
+  let names = "File: New Text File|File: New Krypton File|File: New Window|File: Open File|File: Open Folder|File: Open Workspace|File: Save Workspace As|File: Duplicate Workspace|File: Save|File: Save As|File: Save All|File: Revert File|File: Close Editor|File: Close Window|Edit: Undo|Edit: Redo|Edit: Cut|Edit: Copy|Edit: Paste|Edit: Select All|Edit: Find|Edit: Find Next|Edit: Find Previous|Edit: Find and Replace|View: Toggle Sidebar|View: Toggle File Info|View: Zoom In|View: Zoom Out|View: Reset Zoom|Go: Quick Open|Go: Go to Line|Go: Symbol in File|Go: Symbol in Workspace|Go: Back|Go: Forward|Search: Quick Search|Extensions: Manage Extensions|Extensions: Add Extension from VSIX"
   if storeEdition() == 0 { names = names + "|View: Toggle Terminal|Run: Build File|Run: Run File|Run: Stop|GitHub: Source Control|GitHub: Sign In|GitHub: Refresh" }
   emit msg_1(nsString(names), "componentsSeparatedByString:", nsString("|"))
 }
@@ -226,18 +226,12 @@ func ccRunCommand(name) {
   if name == "Edit: Paste" { edit = "paste:" }
   if name == "Edit: Select All" { edit = "selectAll:" }
   if edit != "" { msg_3(appH(), "sendAction:to:from:", sel(edit), 0, 0) }
-  let tag = 0
-  if name == "Edit: Find" { tag = 1 }
-  if name == "Edit: Find Next" { tag = 2 }
-  if name == "Edit: Find Previous" { tag = 3 }
-  if name == "Edit: Find and Replace" { tag = 12 }
-  if tag > 0 {
-    let sender = allocInit("NSMenuItem")
-    msg_1(sender, "setTag:", tag)
-    msg_3(appH(), "sendAction:to:from:", sel("performTextFinderAction:"), 0, sender)
-    msg(sender, "release")
-  }
+  if name == "Edit: Find" { onFind(0, 0, 0) }
+  if name == "Edit: Find Next" { fiNext(0, 0, 0) }
+  if name == "Edit: Find Previous" { fiPrevious(0, 0, 0) }
+  if name == "Edit: Find and Replace" { onFindReplace(0, 0, 0) }
   if name == "View: Toggle Sidebar" { onToggleSidebar(0, 0, 0) }
+  if name == "View: Toggle File Info" { onFileInfo(0, 0, 0) }
   if name == "View: Toggle Terminal" { onToggleTerminal(0, 0, 0) }
   if name == "View: Zoom In" { onZoomIn(0, 0, 0) }
   if name == "View: Zoom Out" { onZoomOut(0, 0, 0) }
@@ -386,7 +380,7 @@ func ccStartScan(prefix, query) {
   ccSet("scan-queue", cocoaArray())  ccSet("scan-seen", msg(cls("NSMutableSet"), "set"))
   ccSet("scan-index", cocoaNumber(0))  ccSet("scan-bytes", cocoaNumber(0))
   ccSet("scan-done", cocoaNumber(0))  ccSet("scan-limited", cocoaNumber(0))
-  ccSet("scan-due", msg_d1(cls("NSDate"), "dateWithTimeIntervalSinceNow:", 0.15))
+  ccSet("scan-due", msg(cls("NSDate"), "date"))
   let paths = cocoaGetAssocKey(appH(), "brain.tabpaths")
   let i = 0
   while i < cocoaArrayCount(paths) { ccQueue(msg(cocoaArrayGet(paths, i), "UTF8String"))  i = i + 1 }
@@ -546,6 +540,7 @@ func ccRemember() {
   emit 1
 }
 func ccNavigate(path, line, column) {
+  if ccOpenIndex(path) < 0 { path = canonicalPath(path) }
   ccRemember()
   ccSet("history-lock", cocoaNumber(1))
   let index = ccOpenIndex(path)
@@ -586,10 +581,15 @@ func ccTitle() {
   let root = msg(cocoaGetAssocKey(appH(), "brain.dir"), "UTF8String")
   let title = "Search Brain  ⌘P"
   if brainFlag("brain.workspace", 0) == 1 { title = ccClip(baseName(root), 23) + "  ⌘P" }
-  msg_1(ccGet("search-button"), "setTitle:", nsString(title))
+  if cocoaNumberVal(fiGet("active")) == 0 { msg_1(ccGet("search-input"), "setPlaceholderString:", nsString(title)) }
   emit 1
 }
 func pickerClose() {
+  ccSet("active", cocoaNumber(0))
+  if cocoaNumberVal(fiGet("active")) == 0 {
+    msg_1(ccGet("search-input"), "setStringValue:", nsString(""))
+    ccTitle()
+  }
   msg_1(cocoaGetAssocKey(appH(), "brain.picker.window"), "orderOut:", 0)
   ccSet("enumerator", 0)  ccSet("scan-queue", 0)  ccSet("scan-seen", 0)
   let win = cocoaGetAssocKey(appH(), "brain.win")
@@ -607,7 +607,7 @@ func pickerExecute(self, cmd, sender) {
   if kind == "help" {
     msg_1(cocoaGetAssocKey(appH(), "brain.picker.input"), "setStringValue:", ccField(item, "path"))
     pickerFilter()
-    cocoaMakeFirstResponder(cocoaGetAssocKey(appH(), "brain.picker.window"), cocoaGetAssocKey(appH(), "brain.picker.input"))
+    cocoaMakeFirstResponder(cocoaGetAssocKey(appH(), "brain.win"), cocoaGetAssocKey(appH(), "brain.picker.input"))
   } else {
     pickerClose()
     if kind == "command" { ccRunCommand(ccText(item, "title")) }
@@ -645,16 +645,16 @@ func pickerWindowClose(self, cmd, window) { pickerClose()  emit 0 }
 func pickerInit() {
   let app = appH()
   if cocoaGetAssocKey(app, "brain.picker.window") != 0 { emit 1 }
-  let panel = msg_rect(msg(cls("NSPanel"), "alloc"), "initWithContentRect:styleMask:backing:defer:", 0, 0, 740, 430, 3, 2, 0)
+  let panel = msg_rect(msg(cls("NSPanel"), "alloc"), "initWithContentRect:styleMask:backing:defer:", 0, 0, 740, 372, 131, 2, 0)
   msg_1(panel, "setReleasedWhenClosed:", 0)
   msg_1(panel, "setTitle:", nsString("Command Center"))
   msg_1(panel, "setBackgroundColor:", themeSidebar())
   msg_1(panel, "setAppearance:", msg_1(cls("NSAppearance"), "appearanceNamed:", nsString("NSAppearanceNameDarkAqua")))
   msg_1(panel, "setCollectionBehavior:", 257)  msg_1(panel, "setLevel:", 3)
-  let input = cocoaTextField(panel, 18, 374, 704, 34)
-  cocoaSetFont(input, msg_d1(cls("NSFont"), "systemFontOfSize:", 15))
-  cocoaSetBg(input, themeCanvas())  cocoaSetTextColor(input, themeText())
-  msg_1(input, "setPlaceholderString:", nsString("Search files · > commands · @ symbols · : line · % text · ? help"))
+  // Results only: every search mode edits the permanent toolbar field.
+  let input = ccSharedInput()
+  msg_1(panel, "setBecomesKeyOnlyIfNeeded:", 1)
+  msg_1(panel, "setHidesOnDeactivate:", 1)
   let table = cocoaTable(panel, 18, 50, 704, 312)
   msg_1(table, "setHeaderView:", 0)  msg_d1(table, "setRowHeight:", 28)
   msg_1(table, "setBackgroundColor:", themeCanvas())
@@ -675,7 +675,7 @@ func pickerInit() {
   let delegate = cocoaNew(c)
   cocoaSetAssocKey(app, "brain.picker.delegate", delegate)
   cocoaSetDataSource(table, delegate)
-  msg_1(input, "setDelegate:", delegate)  msg_1(panel, "setDelegate:", delegate)
+  msg_1(panel, "setDelegate:", delegate)
   msg_1(table, "setTarget:", delegate)  msg_1(table, "setDoubleAction:", sel("execute:"))
   cocoaSetAssocKey(app, "brain.picker.window", panel)
   cocoaSetAssocKey(app, "brain.picker.input", input)
@@ -685,7 +685,9 @@ func pickerInit() {
 }
 func ccOpen(prefix) {
   if cocoaGetAssocKey(appH(), "brain.promptwindow") != 0 { raiseActivePrompt()  emit 1 }
+  if cocoaNumberVal(fiGet("active")) == 1 { fiClose(0, 0, 0) }
   pickerInit()
+  ccSet("active", cocoaNumber(1))
   ccStartIndex()
   ccSet("prefix", nsString(prefix))
   ccIndexBatch()
@@ -693,8 +695,15 @@ func ccOpen(prefix) {
   ccSet("scan-limited", cocoaNumber(0))
   pickerFilter()
   let panel = cocoaGetAssocKey(appH(), "brain.picker.window")
-  msg(panel, "center")  cocoaShow(panel, appH())
-  cocoaMakeFirstResponder(panel, cocoaGetAssocKey(appH(), "brain.picker.input"))
+  msg(panel, "center")
+  let win = cocoaGetAssocKey(appH(), "brain.win")
+  msg_1(win, "makeKeyAndOrderFront:", 0)
+  cocoaMakeFirstResponder(win, ccSharedInput())
+  // Keep command prefixes when typing after a mode switch.
+  let fieldEditor = msg(ccSharedInput(), "currentEditor")
+  if fieldEditor != 0 { msg_2(fieldEditor, "setSelectedRange:", msg(nsString(prefix), "length"), 0) }
+  msg_2(win, "addChildWindow:ordered:", panel, 1)
+  msg_1(panel, "orderFront:", 0)
   emit 1
 }
 func pickerOpen(mode) { if mode == 1 { ccOpen(">") } else { ccOpen("") }  emit 1 }
@@ -705,22 +714,59 @@ func onGoSymbol(self, cmd, sender) { ccOpen("@") }
 func onWorkspaceSymbol(self, cmd, sender) { ccOpen("#") }
 func onQuickSearch(self, cmd, sender) { ccOpen("%") }
 
+func ccSharedChanged(self, cmd, notification) {
+  if cocoaNumberVal(fiGet("active")) == 1 { fiInvalidate(0, 0, 0) }
+  else {
+    if cocoaNumberVal(ccGet("active")) == 0 {
+      let query = msg(msg(ccSharedInput(), "stringValue"), "UTF8String")
+      ccOpen(query)
+    } else { pickerFilter() }
+  }
+  emit 1
+}
+func ccSharedCommand(self, cmd, control, textView, command) {
+  if cocoaNumberVal(fiGet("active")) == 1 { emit fiCommand(self, cmd, control, textView, command) }
+  emit pickerCommand(self, cmd, control, textView, command)
+}
+func ccSharedInput() {
+  if ccGet("search-input") != 0 { emit ccGet("search-input") }
+  let input = msg_frame(msg(cls("NSTextField"), "alloc"), "initWithFrame:", 64, 10, 244, 28)
+  msg_1(input, "setEditable:", 1)  msg_1(input, "setSelectable:", 1)
+  msg_1(input, "setBezeled:", 0)  msg_1(input, "setDrawsBackground:", 1)
+  msg_1(msg(input, "cell"), "setUsesSingleLineMode:", 1)
+  cocoaSetFont(input, msg_d1(cls("NSFont"), "systemFontOfSize:", 12))
+  cocoaSetBg(input, themeCanvas())  cocoaSetTextColor(input, themeText())
+  msg_1(input, "setPlaceholderString:", nsString("Search Brain  ⌘P"))
+  msg_1(input, "setAccessibilityLabel:", nsString("Search files and commands"))
+  msg_1(input, "setToolTip:", nsString("⌘P files and commands · ⌘F find in current file · Escape to finish"))
+  let c = cocoaClassNew("BrainSharedSearchDelegate")
+  cocoaClassAddMethod(c, "controlTextDidChange:", funcptr(ccSharedChanged), "v@:@")
+  cocoaClassAddMethod(c, "control:textView:doCommandBySelector:", funcptr(ccSharedCommand), "c@:@@:")
+  cocoaClassRegister(c)
+  let delegate = cocoaNew(c)
+  ccSet("search-delegate", delegate)
+  msg_1(input, "setDelegate:", delegate)
+  ccSet("search-input", input)
+  cocoaSetAssocKey(appH(), "brain.picker.input", input)
+  emit input
+}
+
 func ccToolbar(self, identifier) {
   let item = msg_1(msg(cls("NSToolbarItem"), "alloc"), "initWithItemIdentifier:", identifier)
   msg_1(item, "setLabel:", nsString("Command Center"))
   msg_1(item, "setVisibilityPriority:", 1000)
-  let holder = msg_frame(msg(cls("NSView"), "alloc"), "initWithFrame:", 0, 0, 308, 44)
-  let back = msg_frame(msg(cls("NSButton"), "alloc"), "initWithFrame:", 0, 7, 28, 28)
-  let forward = msg_frame(msg(cls("NSButton"), "alloc"), "initWithFrame:", 30, 7, 28, 28)
-  let button = msg_frame(msg(cls("NSButton"), "alloc"), "initWithFrame:", 64, 7, 244, 28)
-  let image = msg_2(cls("NSImage"), "imageWithSystemSymbolName:accessibilityDescription:", nsString("magnifyingglass"), nsString("Search"))
-  msg_1(button, "setImage:", image)  msg_1(button, "setImagePosition:", 2)
-  msg_1(button, "setContentTintColor:", themeToolbarPurple())
-  msg_1(button, "setTarget:", self)  msg_1(button, "setAction:", sel("commandCenter:"))
-  msg_1(button, "setToolTip:", nsString("Search files, commands, symbols and text (⌘P)"))
-  msg_1(button, "setAccessibilityLabel:", nsString("Command Center"))
-  cocoaSetFont(button, msg_d1(cls("NSFont"), "systemFontOfSize:", 12))
-  cocoaSetButtonTextColor(button, themeText())
+  // Match the action holders' flipped coordinates and 24pt vertical center.
+  let holderClass = objc_lookUpClass("BrainToolbarHolder")
+  if holderClass == 0 {
+    holderClass = cocoaViewClassNew("BrainToolbarHolder")
+    cocoaClassAddMethod(holderClass, "isFlipped", funcptr(rulerFlipped), "c@:")
+    cocoaClassRegister(holderClass)
+  }
+  let holder = msg_frame(msg(holderClass, "alloc"), "initWithFrame:", 0, 0, 308, 44)
+  let back = msg_frame(msg(cls("NSButton"), "alloc"), "initWithFrame:", 0, 10, 28, 28)
+  let forward = msg_frame(msg(cls("NSButton"), "alloc"), "initWithFrame:", 30, 10, 28, 28)
+  let button = ccSharedInput()
+  cocoaSetFrame(button, 64, 10, 244, 28)
   let controls = cocoaArray()  cocoaArrayAdd(controls, back)  cocoaArrayAdd(controls, forward)
   let i = 0
   while i < 2 {
@@ -761,7 +807,7 @@ func commandCenterRegression(root) {
   regressionAssert(ccFileQuery("file.ks:12:3") == "file.ks", "File query separates line and column")
   regressionAssert(cocoaNumberVal(ccField(ccGet("file-location"), "line")) == 12 && cocoaNumberVal(ccField(ccGet("file-location"), "column")) == 3, "File line/column parsed exactly")
   regressionAssert(ccLocation("0") == 0 && ccLocation("2:no") == 0 && ccLocation("1:2:3") == 0, "Invalid line inputs rejected")
-  let path = root + "/symbols café.k"
+  let path = canonicalPath(root + "/symbols café.k")
   writeDocument(path, nsString("// func fake() {}\n/*\nfunc hidden() {}\n*/\nobjk object Counter {\n  method tick() -> int = counterTick\n}\nfunc counterTick(runtime, self) { emit 1 }\njust run { print(\"🦋\") }\n"))
   openTab(path)
   ccOpen("@counterTick")
@@ -791,9 +837,10 @@ func commandCenterRegression(root) {
   ccRemember()
   ccNavigate(root + "/alpha.txt", 1, 1)
   ccBack(0, 0, 0)
-  regressionAssert(msg(cocoaGetAssocKey(appH(), "brain.curpath"), "UTF8String") == path && msg(editor, "selectedRange") == 16, "Back restores file and cursor without losing unsaved text")
+  regressionAssert(msg(cocoaGetAssocKey(appH(), "brain.curpath"), "UTF8String") == path, "Back restores canonical file identity" )
+  regressionAssert(msg(editor, "selectedRange") == 16, "Back restores cursor without losing unsaved text")
   ccForward(0, 0, 0)
-  regressionAssert(msg(cocoaGetAssocKey(appH(), "brain.curpath"), "UTF8String") == root + "/alpha.txt", "Forward restores next file")
+  regressionAssert(msg(cocoaGetAssocKey(appH(), "brain.curpath"), "UTF8String") == canonicalPath(root + "/alpha.txt"), "Forward restores next file")
   ccBack(0, 0, 0)
   ccNavigate(root + "/nested/inside.txt", 1, 1)
   regressionAssert(cocoaNumberVal(ccGet("history-index")) + 1 == cocoaArrayCount(ccGet("history")), "New navigation drops stale forward branch")

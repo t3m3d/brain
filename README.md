@@ -63,9 +63,10 @@ buffers before switching branches or pulling.
 
 ## Command Center
 
-Click the centered toolbar search control or press **Cmd+P**. Type a file name
+Click the toolbar search field or press **Cmd+P**. Type a file name
 or path; fuzzy matching includes open/recent files. Use `file:line:column` to
-open at a position. Prefixes switch search modes inside the same popup:
+open at a position. Prefixes switch modes in that same field; a results panel
+contains matches without another search field:
 
 | Prefix | Action |
 |---|---|
@@ -81,7 +82,22 @@ buttons restore previous files and cursor positions (Ctrl+- / Ctrl+Shift+-).
 Search prefers unsaved buffers over disk contents. Indexing and scanning run
 incrementally with limits reported in the popup. Symbol lookup scans common
 language declarations; semantic language-server navigation is not included.
-Find and Replace uses Cmd+Option+F; Open Folder remains available in File menu.
+Cmd+F switches the same toolbar field to Find in the current file. Enter advances
+matches; Escape returns it to file/command search. The Find query is remembered
+when switching modes. Find and Replace uses Cmd+Option+F; Open Folder remains
+available in File menu.
+
+## File Info
+
+The right-hand **File Info** pane explains the active file's likely role: main
+program, header/interface, source module, test, build script, manifest, or other
+document. It shows why that role was inferred, language, size/line count, imports,
+declarations, and path. It follows tabs and unsaved edits. Close it with × and
+reopen it with **View → Toggle File Info** or the command palette.
+
+Analysis runs locally, never executes the file, and scans a bounded source prefix
+for large files. Role descriptions are filename/source inferences, not semantic
+or runtime verification.
 
 ## Extensions
 
@@ -117,3 +133,16 @@ The `kr` wrapper currently masks native child exit codes. CI should invoke the
 compiled app directly for regression checks, and compile release-check scripts
 with `kcc --native release_check.ks -o /tmp/brain-release-check`, then run
 `/tmp/brain-release-check`.
+
+## App artwork
+
+The supplied `codebrain.png` is the icon source. On macOS, run `kr make_icon.ks`
+to regenerate `packaging/brain.icns` and `packaging/store-icon-1024.png`, then
+build the app. The permanent Command Center sits directly left of the top-right
+actions, aligned with their centers. Cmd+F switches that field to Find; only match
+controls appear above the document. Escape ends Find. Replace expands on demand.
+
+## Product roadmap
+
+See [the feature roadmap](docs/ROADMAP.md) for the 25-feature plan, five product
+pillars, local-first architecture, delivery phases, and acceptance gates.
