@@ -199,7 +199,7 @@ func ccCandidates() {
   emit result
 }
 func ccCommands() {
-  let names = "File: New Text File|File: New Krypton File|File: New Window|File: Open File|File: Open Folder|File: Open Workspace|File: Save Workspace As|File: Duplicate Workspace|File: Save|File: Save As|File: Save All|File: Revert File|File: Close Editor|File: Close Window|Edit: Undo|Edit: Redo|Edit: Cut|Edit: Copy|Edit: Paste|Edit: Select All|Edit: Find|Edit: Find Next|Edit: Find Previous|Edit: Find and Replace|View: Toggle Sidebar|View: Toggle File Info|View: Zoom In|View: Zoom Out|View: Reset Zoom|Go: Quick Open|Go: Go to Line|Go: Symbol in File|Go: Symbol in Workspace|Go: Back|Go: Forward|Search: Quick Search|Extensions: Manage Extensions|Extensions: Add Extension from VSIX"
+  let names = "File: New Text File|File: New Krypton File|File: New Window|File: Open File|File: Open Folder|File: Open Workspace|File: Save Workspace As|File: Duplicate Workspace|File: Save|File: Save As|File: Save All|File: Revert File|File: Close Editor|File: Close Window|Edit: Undo|Edit: Redo|Edit: Cut|Edit: Copy|Edit: Paste|Edit: Select All|Edit: Find|Edit: Find Next|Edit: Find Previous|Edit: Find and Replace|View: Code|View: Explore|View: History|View: Security|View: Intelligence|View: Extensions|View: Toggle Sidebar|View: Toggle File Info|View: Zoom In|View: Zoom Out|View: Reset Zoom|Go: Quick Open|Go: Go to Line|Go: Symbol in File|Go: Symbol in Workspace|Go: Back|Go: Forward|Search: Quick Search|Extensions: Manage Extensions|Extensions: Add Extension from VSIX"
   if storeEdition() == 0 { names = names + "|View: Toggle Terminal|Run: Build File|Run: Run File|Run: Stop|GitHub: Source Control|GitHub: Sign In|GitHub: Refresh" }
   emit msg_1(nsString(names), "componentsSeparatedByString:", nsString("|"))
 }
@@ -230,6 +230,12 @@ func ccRunCommand(name) {
   if name == "Edit: Find Next" { fiNext(0, 0, 0) }
   if name == "Edit: Find Previous" { fiPrevious(0, 0, 0) }
   if name == "Edit: Find and Replace" { onFindReplace(0, 0, 0) }
+  if name == "View: Code" { arCode(0, 0, 0) }
+  if name == "View: Explore" { arExplore(0, 0, 0) }
+  if name == "View: History" { arHistory(0, 0, 0) }
+  if name == "View: Security" { arSecurity(0, 0, 0) }
+  if name == "View: Intelligence" { arIntelligence(0, 0, 0) }
+  if name == "View: Extensions" { arExtensions(0, 0, 0) }
   if name == "View: Toggle Sidebar" { onToggleSidebar(0, 0, 0) }
   if name == "View: Toggle File Info" { onFileInfo(0, 0, 0) }
   if name == "View: Toggle Terminal" { onToggleTerminal(0, 0, 0) }
@@ -663,7 +669,7 @@ func pickerInit() {
   themeSurface(msg(table, "enclosingScrollView"), themeCanvas(), 8)
   let detail = cocoaPlainLabel(panel, "", 18, 14, 704, 26)
   cocoaSetFont(detail, msg_d1(cls("NSFont"), "systemFontOfSize:", 11))
-  cocoaSetTextColor(detail, cocoaRGB(164, 166, 174))
+  cocoaSetTextColor(detail, themeMuted())
   let c = cocoaClassNew("BrainCommandCenterDelegate")
   cocoaClassAddMethod(c, "numberOfRowsInTableView:", funcptr(pickerRows), "q@:@")
   cocoaClassAddMethod(c, "tableView:objectValueForTableColumn:row:", funcptr(pickerValue), "@@:@@q")
@@ -735,7 +741,7 @@ func ccSharedInput() {
   msg_1(input, "setBezeled:", 0)  msg_1(input, "setDrawsBackground:", 1)
   msg_1(msg(input, "cell"), "setUsesSingleLineMode:", 1)
   cocoaSetFont(input, msg_d1(cls("NSFont"), "systemFontOfSize:", 12))
-  cocoaSetBg(input, themeCanvas())  cocoaSetTextColor(input, themeText())
+  cocoaSetBg(input, themeField())  cocoaSetTextColor(input, themeText())
   msg_1(input, "setPlaceholderString:", nsString("Search Brain  ⌘P"))
   msg_1(input, "setAccessibilityLabel:", nsString("Search files and commands"))
   msg_1(input, "setToolTip:", nsString("⌘P files and commands · ⌘F find in current file · Escape to finish"))
@@ -782,9 +788,9 @@ func ccToolbar(self, identifier) {
     i = i + 1
   }
   msg_1(button, "setBordered:", 0)
-  themeSurface(button, themeCanvas(), 6)
+  themeSurface(button, themeField(), 6)
   msg_d1(msg(button, "layer"), "setBorderWidth:", 1)
-  msg_1(msg(button, "layer"), "setBorderColor:", msg(cocoaRGB(72, 64, 87), "CGColor"))
+  msg_1(msg(button, "layer"), "setBorderColor:", msg(cocoaRGB(67, 47, 91), "CGColor"))
   msg_1(holder, "addSubview:", button)
   msg_1(item, "setView:", holder)
   msg_d2(item, "setMinSize:", 308, 44)  msg_d2(item, "setMaxSize:", 308, 44)

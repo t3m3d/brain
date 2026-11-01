@@ -268,3 +268,10 @@ surfaces and extension interfaces as services ship.
 Each milestone must include native regression checks, visual acceptance in the
 installed app, documented limits, feature inventory updates and edition-specific
 verification. A written roadmap entry is not an implemented feature.
+
+## Future integration candidate: Cortex (2026-11-01)
+
+Consider a dedicated Cortex activity-bar panel once the macOS version of Cortex
+is ready. This is a tentative future integration, not a current implementation
+requirement. Define its workflow, capabilities, and connection/privacy boundaries
+when the Mac application is available; do not add a nonfunctional panel now.

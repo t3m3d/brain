@@ -102,7 +102,7 @@ or runtime verification.
 ## Extensions
 
 Choose **Extensions → Manage Extensions…** in the macOS menu bar. The matching
-charcoal popup lists imported VSIX packages and versions. **Add VSIX…** imports a
+plum Extensions page lists imported VSIX packages and versions. **Add VSIX…** imports a
 local package; **Remove** deletes the selected package after confirmation.
 Importing the same publisher/name offers to replace its stored version.
 
@@ -146,3 +146,21 @@ controls appear above the document. Escape ends Find. Replace expands on demand.
 
 See [the feature roadmap](docs/ROADMAP.md) for the 25-feature plan, five product
 pillars, local-first architecture, delivery phases, and acceptance gates.
+
+## Activity bar
+
+The permanent left activity bar opens **Code**, **Explore**, **History**,
+**Security**, **Intelligence**, and **Extensions**. Click the selected section
+again to collapse its sidebar, or use View → Toggle Sidebar. The bar stays visible.
+Extensions uses an in-app package-management page. Other sections connect existing
+navigation and source-analysis tools; unfinished roadmap capabilities are labeled.
+
+## Shared Orbit branding
+
+Brain uses Orbit’s native palette: `#16101F` plum backgrounds, `#241934` raised
+surfaces and fields, and `#F2EAFF` text. The activity rail, editor, terminal,
+sidebars, status bar, and search controls share this palette. Krypton-purple
+action symbols remain unchanged.
+
+File Explorer uses a quieter `#211B2B` charcoal-plum to distinguish the file list
+from the darker editor; other surfaces retain the shared Orbit palette.

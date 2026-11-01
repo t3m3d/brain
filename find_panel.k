@@ -170,8 +170,8 @@ func fiInstall(win, parent) {
   let replacement = cocoaTextField(win, 12, 4, 220, 28)
   moveView(replacement, replaceRow, 12, 4, 220, 28, 0)
   msg_1(replacement, "setPlaceholderString:", nsString("Replace with…"))
-  cocoaSetBg(query, themeCanvas())  cocoaSetTextColor(query, themeText())
-  cocoaSetBg(replacement, themeCanvas())  cocoaSetTextColor(replacement, themeText())
+  cocoaSetBg(query, themeField())  cocoaSetTextColor(query, themeText())
+  cocoaSetBg(replacement, themeField())  cocoaSetTextColor(replacement, themeText())
   fiButton(win, body, "↑", 312, 6, 30, funcptr(fiPrevious), "previous")
   let next = fiButton(win, body, "↓", 348, 6, 30, funcptr(fiNext), "next")
   cocoaSetButtonTextColor(next, themeToolbarPurple())
@@ -202,6 +202,7 @@ func fiInstall(win, parent) {
 }
 func onFind(self, cmd, sender) {
   if fiGet("panel") == 0 { emit 0 }
+  arDismissPage()
   let wasActive = cocoaNumberVal(fiGet("active"))
   pickerClose()
   fiSet("active", cocoaNumber(1))

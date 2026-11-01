@@ -1,6 +1,6 @@
 # Brain feature list
 
-Updated: 2026-10-28. Keep this file current whenever a feature is added or changed.
+Updated: 2026-11-01. Keep this file current whenever a feature is added or changed.
 Implementation and remaining release checks are tracked separately in
 [RELEASE_READINESS.md](RELEASE_READINESS.md).
 
@@ -21,7 +21,10 @@ Implementation and remaining release checks are tracked separately in
 
 ## Appearance and windows
 
-- Charcoal editor surfaces and darker Krypton purple toolbar symbols (#5D16DA).
+- Orbit plum canvas (#16101F), raised surfaces/fields (#241934), soft text
+  (#F2EAFF), and Krypton purple toolbar symbols (#5D16DA).
+- File Explorer uses a quieter charcoal-plum (#211B2B) for clearer separation
+  from the editor without the stronger purple of raised controls.
 - Subtle rounded controls, spaced toolbar actions, and adjusted toolbar position.
 - Sidebar and terminal visibility toggles.
 - Terminal panel omits the redundant “STEM TERMINAL / zsh” heading and inline
@@ -153,3 +156,20 @@ Full native regression verification remains in progress.
 - Local, non-executing source-pattern analysis; cached between content changes.
   Large-file analysis is limited to the first 131,072 UTF-16 units. No LSP or AI
   semantic summary is claimed; the pane labels its findings as inferred.
+
+## Permanent activity bar and section panels (2026-11-01)
+
+- Narrow activity bar outside the collapsible sidebar, with purple active markers
+  and accessible buttons for Code, Explore, History, Security, Intelligence, and
+  Extensions. Selecting the current section collapses its panel; the bar stays.
+- Code preserves Explorer, Open Folder, and the GitHub card. Explore groups file
+  purpose, declarations, project text search, and File Info.
+- History groups Source Control and recent-file navigation. Security provides
+  explicitly labeled manual credential/execution text searches, not scan claims.
+- Intelligence displays local source-pattern explanations and clear AI status.
+  Security scanning, project graphs, timelines/snapshots, and AI remain planned.
+- Extensions opens a scrollable in-app page with installed VSIX packages, details,
+  Add/Replace, Remove, and Done. Import validation/storage behavior is unchanged;
+  packages remain Inactive until runtime support exists.
+- View menu and Command Center can select all sections. Returning to an editor
+  tab or Find dismisses the Extensions page; sidebar toggles preserve the rail.

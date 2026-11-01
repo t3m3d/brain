@@ -114,6 +114,10 @@ func exDiscardStage() {
   exSet("stage", 0)
   emit 1
 }
+func exOwner() {
+  if exGet("dock") != 0 { emit cocoaGetAssocKey(appH(), "brain.win") }
+  emit exGet("window")
+}
 func exConfirm(title, detail, action) {
   let alert = allocInit("NSAlert")
   msg_1(alert, "setMessageText:", nsString(title))
@@ -122,7 +126,7 @@ func exConfirm(title, detail, action) {
   msg_1(alert, "addButtonWithTitle:", nsString("Cancel"))
   let response = runBrainAlert(alert)
   msg(alert, "release")
-  msg_1(exGet("window"), "makeKeyAndOrderFront:", 0)
+  msg_1(exOwner(), "makeKeyAndOrderFront:", 0)
   emit response == 1000
 }
 func exCommit(data) {
@@ -241,7 +245,7 @@ func exAdd(self, cmd, sender) {
   msg_1(panel, "setTitle:", nsString("Add Extension"))
   msg_1(panel, "setPrompt:", nsString("Add VSIX"))
   let result = runBrainPanel(panel)
-  msg_1(exGet("window"), "makeKeyAndOrderFront:", 0)
+  msg_1(exOwner(), "makeKeyAndOrderFront:", 0)
   if result == 1 {
     let url = msg(panel, "URL")
     let accessing = msg(url, "startAccessingSecurityScopedResource")
@@ -270,6 +274,7 @@ func exClose(self, cmd, sender) {
   let task = exGet("task")
   if task != 0 { exSet("failed", cocoaNumber(1))  msg(task, "terminate") }
   msg_1(exGet("window"), "orderOut:", 0)
+  if exGet("dock") != 0 { msg_1(exGet("dock"), "setHidden:", 1)  arActivate(0, 0) }
   emit 1
 }
 func exWindowClose(self, cmd, window) { exClose(self, cmd, window)  emit 0 }
@@ -293,7 +298,7 @@ func exInit() {
   cocoaSetTextColor(header, themeText())
   msg_1(header, "setAutoresizingMask:", 10)
   let subtitle = cocoaPlainLabel(window, "Add and remove VSIX packages for Brain", 24, 360, 610, 22)
-  cocoaSetTextColor(subtitle, cocoaRGB(164, 166, 174))
+  cocoaSetTextColor(subtitle, themeMuted())
   msg_1(subtitle, "setAutoresizingMask:", 10)
   let table = cocoaTable(window, 24, 154, 612, 194)
   msg_1(table, "setHeaderView:", 0)
@@ -331,12 +336,54 @@ func exInit() {
   emit 1
 }
 func onExtensions(self, cmd, sender) {
+  if arGet("bar") != 0 { arActivate(5, 0)  emit 1 }
   exInit()
   if exGet("task") == 0 { exReload("") }
-  msg_1(exGet("window"), "makeKeyAndOrderFront:", 0)
+  msg_1(exOwner(), "makeKeyAndOrderFront:", 0)
   emit 1
 }
 func onAddExtension(self, cmd, sender) { onExtensions(self, cmd, sender)  exAdd(self, cmd, sender)  emit 1 }
+
+// Reuse package-manager controls in a scrollable in-app page.
+func exShowDock() {
+  exInit()
+  if exGet("dock") == 0 {
+    let parent = arGet("editor-parent")
+    let scroll = msg_frame(msg(cls("NSScrollView"), "alloc"), "initWithFrame:", 0, 0, 829, 466)
+    msg_1(scroll, "setHasVerticalScroller:", 1)
+    msg_1(scroll, "setHasHorizontalScroller:", 1)
+    msg_1(scroll, "setBackgroundColor:", themeSidebar())
+    msg_1(scroll, "setDrawsBackground:", 1)
+    msg_1(scroll, "setTranslatesAutoresizingMaskIntoConstraints:", 0)
+    msg_1(parent, "addSubview:", scroll)
+    let constraints = cocoaArray()
+    cocoaArrayAdd(constraints, msg_1(msg(scroll, "leadingAnchor"), "constraintEqualToAnchor:", msg(parent, "leadingAnchor")))
+    cocoaArrayAdd(constraints, msg_1(msg(scroll, "trailingAnchor"), "constraintEqualToAnchor:", msg(parent, "trailingAnchor")))
+    cocoaArrayAdd(constraints, msg_1(msg(scroll, "topAnchor"), "constraintEqualToAnchor:", msg(parent, "topAnchor")))
+    cocoaArrayAdd(constraints, msg_1(msg(scroll, "bottomAnchor"), "constraintEqualToAnchor:", msg(parent, "bottomAnchor")))
+    msg_1(cls("NSLayoutConstraint"), "activateConstraints:", constraints)
+    let body = msg_frame(msg(cls("NSView"), "alloc"), "initWithFrame:", 0, 0, 660, 440)
+    themeSurface(body, themeSidebar(), 0)
+    msg_1(scroll, "setDocumentView:", body)
+    let children = msg(msg(msg(exGet("window"), "contentView"), "subviews"), "copy")
+    let i = 0
+    while i < cocoaArrayCount(children) {
+      let child = cocoaArrayGet(children, i)
+      msg_1(child, "retain")  msg(child, "removeFromSuperview")
+      msg_1(body, "addSubview:", child)  msg(child, "release")
+      i = i + 1
+    }
+    msg(children, "release")
+    exSet("dock", scroll)
+  }
+  pickerClose()
+  if cocoaNumberVal(fiGet("active")) == 1 { fiClose(0, 0, 0) }
+  msg_1(scGet("panel"), "setHidden:", 1)
+  if exGet("task") == 0 { exReload("") }
+  msg_1(exGet("dock"), "setHidden:", 0)
+  msg(arGet("editor-parent"), "layoutSubtreeIfNeeded")
+  emit 1
+}
 
 // Regression mode uses isolated storage and real ZIP reads, never user packages.
 func exTestIdle() {

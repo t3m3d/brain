@@ -284,3 +284,55 @@ The terminal's inline × button was subsequently removed (2026-10-28). Installed
 signature and executable identity verified. UI checks confirmed the button is
 absent and terminal visibility still changes through Cmd+J, View → Toggle
 Terminal, and the toolbar terminal button. Terminal was left visible afterward.
+
+## Activity bar and Extensions page (2026-11-01)
+
+A permanent 48-point rail lives outside the collapsible split view. Six accessible
+buttons select Code, Explore, History, Security, Intelligence and Extensions. Code
+wraps the existing Explorer/GitHub views; other sections expose existing actions
+and accurately label unimplemented roadmap features. View-menu and Command Center
+routes select sections. Security uses manual literal searches, not a scanner;
+Intelligence uses deterministic local file explanations, not an AI provider.
+
+Extensions reuses the existing manager controls and backend inside a scrollable
+editor page. The 660×440 manager surface remains reachable through scrollbars in
+narrow editor areas. Add/Replace and Remove retain validation and confirmations;
+prompt focus returns to the main editor window. Tab selection, Find, and Source
+Control dismiss the page before showing their content.
+
+Native --activity-test passed all six panel selections, collapse/reopen behavior,
+permanent rail ancestry/visibility, docked Extensions ownership and dismissal.
+Isolated --extensions-test fixtures passed import, Unicode paths, malformed and
+oversized metadata, archive preservation, removal and cancellation. Existing
+editor regressions passed through File Info; the previously documented Back
+canonical-file-identity assertion still fails. git diff --check passed.
+
+Installed into /Applications/brain.app while Brain was not running, preserving a
+prior-app backup under /tmp/brain-before-activity.*. Signature verified and installed
+executable matched the build. Computer-use tools were unavailable in this session;
+on-screen visual acceptance and user-flow acceptance for the docked page remain
+outstanding. Native view-state tests are not a substitute for that visual check.
+
+## Orbit branding palette (2026-11-01)
+
+Matched source colors from the sibling Orbit app's macos/orbit.ks purpleWindow
+and purpleField helpers: canvas #16101F, raised surfaces/fields #241934, text
+#F2EAFF. Muted text and selection accents use related lilac tones. Krypton's
+#5D16DA toolbar/action symbols remain unchanged. Shared helpers now color the
+window/titlebar backing, editor, terminal, sidebar, activity rail, File Info,
+search fields, status bar, ruler and minimap. Explorer uses plain table styling
+so native source-list vibrancy does not override the supplied background.
+
+Build, native --activity-test, and git diff --check passed. Installed while Brain
+was closed; previous bundle preserved under /tmp/brain-before-orbit-brand.*.
+Installed signature verified, executable matched the build, and Brain launched.
+On-screen palette acceptance remains unverified because computer-use tools were
+unavailable; the source values match Orbit exactly.
+
+## Quieter File Explorer color (2026-11-01)
+
+Added a dedicated #211B2B charcoal-plum Explorer surface. It colors only the
+Explorer container, Code section wrapper, file outline and its scrolling backing.
+Other panels retain Orbit's #16101F / #241934 palette. Native --activity-test and
+git diff --check passed. Built app is ready; installation/restart awaits the
+user's confirmation because an existing Brain process is still running.

@@ -6,6 +6,7 @@ import "extensions.k"
 import "command_center.k"
 import "find_panel.k"
 import "file_info.k"
+import "activity_bar.k"
 import "k:objc"
 import "head:cocoa"
 import "head:objc"
@@ -1251,11 +1252,14 @@ func onTextChanged(self, cmd, notification) {
   emit "1"
 }
 
-// Shared charcoal surfaces, with Krypton purple reserved for toolbar symbols.
-func themeCanvas() { emit cocoaRGB(31, 31, 36) }
-func themeSidebar() { emit cocoaRGB(37, 37, 42) }
-func themeText() { emit cocoaRGB(217, 219, 214) }
-func themeAccent() { emit cocoaRGB(92, 181, 237) }
+// Orbit brand palette: macos/orbit.ks purpleWindow / purpleField.
+func themeCanvas() { emit cocoaRGB(22, 16, 31) } // #16101F
+func themeSidebar() { emit cocoaRGB(36, 25, 52) } // #241934
+func themeField() { emit cocoaRGB(36, 25, 52) }
+func themeExplorer() { emit cocoaRGB(33, 27, 43) } // #211B2B: quiet charcoal-plum
+func themeText() { emit cocoaRGB(242, 234, 255) } // #F2EAFF
+func themeMuted() { emit cocoaRGB(180, 167, 199) }
+func themeAccent() { emit cocoaRGB(166, 129, 215) }
 // Krypton primary-dark from krypton/web/site/export.htk: #5d16da.
 func themeToolbarPurple() { emit cocoaRGB(93, 22, 218) }
 func themeSurface(view, color, radius) {
@@ -1406,6 +1410,7 @@ func closeTab(idx) {
 }
 func onTabClose(self, cmd, sender) { closeTab(cocoaNumberVal(cocoaGetAssocKey(sender, "idx"))) }
 func selectTab(idx) {
+  arDismissPage()
   ccRemember()
   let app = appH()
   let paths = cocoaGetAssocKey(app, "brain.tabpaths")
@@ -2259,6 +2264,7 @@ func relayout() {
   msg_1(terminal, "setHidden:", 1 - brainFlag("brain.terminal", 0))
   msg(cocoaGetAssocKey(app, "brain.hsplit"), "adjustSubviews")
   msg(cocoaGetAssocKey(app, "brain.vsplit"), "adjustSubviews")
+  arSync()
   msg(cocoaGetAssocKey(app, "brain.win"), "displayIfNeeded")
   emit "1"
 }
@@ -2286,8 +2292,8 @@ func installLayout(win, table, editor, term, keys) {
   let header = cocoaPlainLabel(win, "  EXPLORER", 0, 672, 210, 26)
   moveView(header, side, 0, 672, 210, 26, 10)
   cocoaSetFont(header, msg_d1(cls("NSFont"), "systemFontOfSize:", 11))
-  cocoaSetTextColor(header, cocoaRGB(164, 166, 174))
-  themeSurface(side, themeSidebar(), 0)
+  cocoaSetTextColor(header, themeMuted())
+  themeSurface(side, themeExplorer(), 0)
   let openFolder = cocoaButton(win, "Open Folder", 16, 630, 178, 30)
   moveView(openFolder, side, 16, 630, 178, 30, 10)
   cocoaOnClickKeyed(openFolder, "open-folder", funcptr(onOpenFolder))
@@ -2320,10 +2326,10 @@ func installLayout(win, table, editor, term, keys) {
   let status = cocoaPlainLabel(win, "  Ln 1, Col 1      TEXT      0 chars", 0, 0, 1040, 22)
   cocoaSetAssocKey(app, "brain.status", status)
   msg_1(status, "setDrawsBackground:", 1)
-  cocoaSetBg(status, cocoaRGB(41, 41, 48))
+  cocoaSetBg(status, themeSidebar())
   msg_1(status, "setAutoresizingMask:", 34)
   cocoaSetFont(status, cocoaMonoFont(11))
-  cocoaSetTextColor(status, cocoaRGB(164, 166, 174))
+  cocoaSetTextColor(status, themeMuted())
   cocoaSetAssocKey(app, "brain.hsplit", split)
   cocoaSetAssocKey(app, "brain.vsplit", vertical)
   cocoaSetAssocKey(app, "brain.sidepane", side)
@@ -2500,8 +2506,8 @@ func drawLineNumbers(self, cmd) {
   let lineHeight = brainFlag("brain.fontsize", 13) + 3
   let first = scrollY / lineHeight
   let total = brainFlag("brain.linecount", 1)
-  let attrs = cocoaTextAttrs(cocoaMonoFont(10), cocoaRGB(115, 120, 128))
-  cocoaColorSet(cocoaRGB(40, 40, 40))
+  let attrs = cocoaTextAttrs(cocoaMonoFont(10), themeMuted())
+  cocoaColorSet(themeSidebar())
   cocoaFillRect(0, 0, 48, 10000)
   let line = first
   let end = first + 200
@@ -2513,14 +2519,14 @@ func drawLineNumbers(self, cmd) {
   emit "1"
 }
 func drawMinimap(self, cmd) {
-  cocoaColorSet(cocoaRGB(28, 28, 32))
+  cocoaColorSet(themeCanvas())
   cocoaFillRect(0, 0, 62, 10000)
   let source = cocoaTVGetString(cocoaGetAssocKey(appH(), "brain.editor"))
   let length = len(source)
   let i = 0
   let line = 0
   let width = 0
-  cocoaColorSet(cocoaRGB(115, 120, 128))
+  cocoaColorSet(themeMuted())
   while i <= length && line < 500 {
     let newline = 0
     if i == length { newline = 1 }
@@ -2562,6 +2568,7 @@ func refreshEditorChrome() {
   msg_1(cocoaGetAssocKey(app, "brain.ruler"), "setNeedsDisplay:", 1)
   msg_1(cocoaGetAssocKey(app, "brain.minimap"), "setNeedsDisplay:", 1)
   infoRefresh()
+  arRefresh()
   emit "1"
 }
 func onEditorSelection(self, cmd, notification) { refreshEditorChrome()  emit "1" }
@@ -2898,6 +2905,7 @@ func editorRegressionTests() {
 }
 
 just run {
+  if argCount() > 0 { if arg(0) == "--activity-test" { activityRegression()  exit(0) } }
   if argCount() > 0 { if arg(0) == "--self-test" { editorRegressionTests()  exit(0) } }
   if argCount() > 1 { if arg(0) == "--extensions-test" { extensionsRegression(arg(1))  exit(0) } }
   let dir = projDir()
@@ -2987,11 +2995,13 @@ just run {
   cocoaSetFont(editor, cocoaFontFamily(cocoaMonoFont(13), "JetBrainsMono Nerd Font Mono"))
   // dark theme
   cocoaSetBg(win, themeCanvas())
-  cocoaSetBg(table, themeSidebar())
+  themeSurface(msg(win, "contentView"), themeCanvas(), 0)
+  cocoaSetBg(table, themeExplorer())
   msg_1(msg(table, "enclosingScrollView"), "setDrawsBackground:", 1)
-  cocoaSetBg(msg(table, "enclosingScrollView"), themeSidebar())
-  msg_1(table, "setStyle:", 1)
-  cocoaSetBg(table, themeSidebar())
+  cocoaSetBg(msg(table, "enclosingScrollView"), themeExplorer())
+  themeSurface(msg(msg(table, "enclosingScrollView"), "contentView"), themeExplorer(), 0)
+  msg_1(table, "setStyle:", 0)
+  cocoaSetBg(table, themeExplorer())
   msg_d1(table, "setRowHeight:", 24)
   msg_1(table, "setSelectionHighlightStyle:", 1)
   msg_d2(editor, "setTextContainerInset:", 6, 6)
@@ -3017,7 +3027,7 @@ just run {
   msg_1(term, "setSelectable:", 1)
   let tmono = cocoaFontFamily(cocoaMonoFont(12), "JetBrainsMono Nerd Font Mono")
   cocoaSetFont(term, tmono)
-  let tfg = cocoaColorNamed("whiteColor")
+  let tfg = themeText()
   cocoaSetBg(term, themeCanvas())
   cocoaSetTextColor(term, tfg)
   let kview = term
@@ -3096,6 +3106,7 @@ just run {
   cocoaSetAssocKey(app, "brain.curtab", cocoaNumber(0 - 1))
   installLayout(win, table, editor, term, kview)
   if storeEdition() == 0 { scInstall(win, msg(msg(editor, "enclosingScrollView"), "superview")) }
+  arInstall(win, msg(msg(editor, "enclosingScrollView"), "superview"))
   installRuler(editor)
   let clip = msg(msg(editor, "enclosingScrollView"), "contentView")
   msg_1(clip, "setPostsBoundsChangedNotifications:", 1)
@@ -3145,6 +3156,13 @@ just run {
   let viewMenu = cocoaMenuAdd(bar, "View")
   cocoaMenuItem(viewMenu, "Command Palette", "P", funcptr(onCommandPalette))
   cocoaMenuItem(viewMenu, "Quick Open", "p", funcptr(onQuickOpen))
+  cocoaMenuSeparator(viewMenu)
+  cocoaMenuItem(viewMenu, "Code", "", funcptr(arCode))
+  cocoaMenuItem(viewMenu, "Explore", "", funcptr(arExplore))
+  cocoaMenuItem(viewMenu, "History", "", funcptr(arHistory))
+  cocoaMenuItem(viewMenu, "Security", "", funcptr(arSecurity))
+  cocoaMenuItem(viewMenu, "Intelligence", "", funcptr(arIntelligence))
+  cocoaMenuItem(viewMenu, "Extensions", "", funcptr(arExtensions))
   cocoaMenuSeparator(viewMenu)
   cocoaMenuItem(viewMenu, "Toggle Sidebar", "b", funcptr(onToggleSidebar))
   cocoaMenuItem(viewMenu, "Toggle File Info", "", funcptr(onFileInfo))

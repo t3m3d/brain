@@ -94,6 +94,7 @@ func scStart(executable, args, mode, directory) {
 }
 func scGit(args, mode) { emit scStart("/usr/bin/git", args, mode, scText("root")) }
 func scSidebarAction(self, cmd, sender) {
+  arDismissPage()
   msg_1(scGet("panel"), "setHidden:", 0)
   if scGet("login") != 0 { scAccount() }
   else { scAuthenticate(self, cmd, sender) }
@@ -590,6 +591,7 @@ func scInstall(win, parent) {
 }
 func onSourceControl(self, cmd, sender) {
   if storeEdition() == 1 { emit "1" }
+  arDismissPage()
   let panel = scGet("panel")
   let hidden = msg(panel, "isHidden")
   msg_1(panel, "setHidden:", 1 - hidden)
