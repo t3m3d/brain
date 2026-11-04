@@ -617,7 +617,20 @@ func pickerExecute(self, cmd, sender) {
   } else {
     pickerClose()
     if kind == "command" { ccRunCommand(ccText(item, "title")) }
-    else { ccNavigate(ccText(item, "path"), cocoaNumberVal(ccField(item, "line")), cocoaNumberVal(ccField(item, "column"))) }
+    else {
+      ccNavigate(ccText(item, "path"), cocoaNumberVal(ccField(item, "line")), cocoaNumberVal(ccField(item, "column")))
+      // Select the found word rather than leaving a bare caret at it.
+      if kind == "match" {
+        let length = msg(ccGet("query"), "length")
+        if length > 0 {
+          let editor = cocoaGetAssocKey(appH(), "brain.editor")
+          let offset = msg(editor, "selectedRange")
+          msg_2(editor, "setSelectedRange:", offset, length)
+          msg_2(editor, "scrollRangeToVisible:", offset, length)
+          refreshEditorChrome()
+        }
+      }
+    }
   }
   msg(item, "release")
   emit 1
@@ -835,6 +848,7 @@ func commandCenterRegression(root) {
   regressionAssert(cocoaArrayCount(cocoaGetAssocKey(appH(), "brain.picker.results")) == 2, "Text search includes all matches in unsaved current buffer")
   pickerExecute(0, 0, 0)
   regressionAssert(msg(editor, "selectedRange") == 16, "Text result opens exact UTF-16 match location")
+  regressionAssert(msg_1(cocoaArrayGet(msg(editor, "selectedRanges"), 0), "isEqual:", msg_2(cls("NSValue"), "valueWithRange:", 16, 13)) == 1, "Text result highlights the matched word")
   ccOpen("#counterTick")
   ccTestSearchIdle()
   regressionAssert(cocoaArrayCount(cocoaGetAssocKey(appH(), "brain.picker.results")) == 0, "Workspace symbols prefer unsaved text over stale disk text")

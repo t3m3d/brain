@@ -920,7 +920,11 @@ func sgrIndex(body) {
 func appendRunTo(acc, text, fg, bg, font) {
   if len(text) == 0 { emit "1" }
   let start = msg(acc, "length")
-  let fragment = msg_1(msg(cls("NSAttributedString"), "alloc"), "initWithString:", nsString(text))
+  // nsString() returns nil for bytes that are not valid UTF-8 (a split
+  // escape/Unicode run from the pty). Never hand nil to initWithString:.
+  let value = nsString(text)
+  if value == 0 { value = nsString("?") }
+  let fragment = msg_1(msg(cls("NSAttributedString"), "alloc"), "initWithString:", value)
   msg_1(acc, "appendAttributedString:", fragment)
   msg(fragment, "release")
   let span = msg(acc, "length") - start
