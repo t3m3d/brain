@@ -223,6 +223,11 @@ func activityRegression() {
   cocoaSetAssocKey(app, "brain.table", tree)
   installLayout(win, tree, editor, term, 0)
   arInstall(win, msg(msg(editor, "enclosingScrollView"), "superview"))
+  regressionAssert(msg(tree, "effectiveStyle") == 4, "Explorer keeps plain styling after reparenting")
+  regressionAssert(msg_1(msg(tree, "backgroundColor"), "isEqual:", themeExplorer()) == 1, "Explorer document uses brand background")
+  let treeScroll = msg(tree, "enclosingScrollView")
+  regressionAssert(msg_1(msg(treeScroll, "backgroundColor"), "isEqual:", themeExplorer()) == 1, "Empty Explorer scroll area uses brand background")
+  regressionAssert(msg_1(msg(msg(treeScroll, "contentView"), "backgroundColor"), "isEqual:", themeExplorer()) == 1, "Explorer clip uses brand background")
   exSet("test-root", nsString("/tmp/brain-activity-no-packages"))
   let i = 0
   while i < 6 {

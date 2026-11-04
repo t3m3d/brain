@@ -334,5 +334,21 @@ unavailable; the source values match Orbit exactly.
 Added a dedicated #211B2B charcoal-plum Explorer surface. It colors only the
 Explorer container, Code section wrapper, file outline and its scrolling backing.
 Other panels retain Orbit's #16101F / #241934 palette. Native --activity-test and
-git diff --check passed. Built app is ready; installation/restart awaits the
-user's confirmation because an existing Brain process is still running.
+git diff --check passed. Installed after the user confirmed a restart; Brain
+was already closed. Previous bundle preserved at
+/tmp/brain-before-explorer-color.iDO3fP/brain.app. Installed signature verified,
+executable matched the build, and Brain reopened successfully. On-screen color
+acceptance remains unverified because computer-use tools were unavailable.
+
+### Explorer gray background correction
+
+The user's screenshot showed the outline's empty area remained system gray.
+The previous change used style 0 (Automatic, not Plain), followed by deprecated
+source-list selection styling. Explorer construction now sets regular selection
+and explicit Plain style (4) before applying #211B2B to the outline, scroll view,
+and clip view. The native activity regression checks effective style and all
+three background colors after the view is reparented into the Code panel.
+Build and native --activity-test passed, including all four new style/color
+assertions. Installed and reopened after the user's restart confirmation;
+signature verified and installed executable matched the build. Previous bundle:
+/tmp/brain-before-explorer-gray.7VTqt6/brain.app. Visual acceptance remains pending.

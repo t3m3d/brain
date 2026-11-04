@@ -1999,6 +1999,15 @@ func explorerView(win) {
   msg_1(outline, "addTableColumn:", column)
   msg_1(outline, "setOutlineTableColumn:", column)
   msg_1(scroll, "setDocumentView:", outline)
+  // Plain = 4; Automatic = 0. Source-list selection restores a system gray.
+  msg_1(outline, "setSelectionHighlightStyle:", 0)
+  msg_1(outline, "setStyle:", 4)
+  cocoaSetBg(outline, themeExplorer())
+  msg_1(scroll, "setDrawsBackground:", 1)
+  cocoaSetBg(scroll, themeExplorer())
+  let clip = msg(scroll, "contentView")
+  msg_1(clip, "setDrawsBackground:", 1)
+  cocoaSetBg(clip, themeExplorer())
   msg_1(msg(win, "contentView"), "addSubview:", scroll)
   emit outline
 }
@@ -2996,14 +3005,7 @@ just run {
   // dark theme
   cocoaSetBg(win, themeCanvas())
   themeSurface(msg(win, "contentView"), themeCanvas(), 0)
-  cocoaSetBg(table, themeExplorer())
-  msg_1(msg(table, "enclosingScrollView"), "setDrawsBackground:", 1)
-  cocoaSetBg(msg(table, "enclosingScrollView"), themeExplorer())
-  themeSurface(msg(msg(table, "enclosingScrollView"), "contentView"), themeExplorer(), 0)
-  msg_1(table, "setStyle:", 0)
-  cocoaSetBg(table, themeExplorer())
   msg_d1(table, "setRowHeight:", 24)
-  msg_1(table, "setSelectionHighlightStyle:", 1)
   msg_d2(editor, "setTextContainerInset:", 6, 6)
   cocoaSetBg(editor, themeCanvas())
   cocoaSetTextColor(editor, themeText())
