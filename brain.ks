@@ -1169,10 +1169,10 @@ func hlNumbers(ts, src, color) {
     if i > 0 { before = charCode(substring(src, i - 1, i)) }
     if c >= 48 { if c <= 57 { if isIdentCh(before) == 0 {
       let j = i + 1
-      let go = 1
-      while go == 1 {
-        if j >= n { go = 0 }
-        else { let d = charCode(substring(src, j, j + 1))  if (d >= 48 && d <= 57) || d == 46 { j = j + 1 } else { go = 0 } }
+      let scanning = 1
+      while scanning == 1 {
+        if j >= n { scanning = 0 }
+        else { let d = charCode(substring(src, j, j + 1))  if (d >= 48 && d <= 57) || d == 46 { j = j + 1 } else { scanning = 0 } }
       }
       colorUTF8Range(ts, src, color, i, j - i)
       i = j - 1
