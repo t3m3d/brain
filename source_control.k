@@ -311,17 +311,44 @@ func scReloadEditors() {
   if active >= 0 { cocoaSetAssocKey(appH(), "brain.switching", cocoaNumber(1))  selectTab(active) }
   emit "1"
 }
-func scCommit(self, cmd, sender) {
+func scCommitNow() {
   if scGet("root") == 0 { scMessage("Open a Git repository first.")  emit "1" }
   let message = msg(scGet("commit"), "stringValue")
   if len(trim(msg(message, "UTF8String"))) == 0 { scMessage("Enter a commit message. Only staged changes will be committed.")  emit "1" }
   let args = scArgs()  scArg(args, "commit")  scArg(args, "-m")  cocoaArrayAdd(args, message)
   scGit(args, "commit")  emit "1"
 }
+func scCommit(self, cmd, sender) { scSet("chainpush", cocoaNumber(0))  scCommitNow()  emit "1" }
+func scCommitPush(self, cmd, sender) { scSet("chainpush", cocoaNumber(1))  scCommitNow()  emit "1" }
+func scFocusCommit(push) {
+  if storeEdition() == 1 || scGet("panel") == 0 { emit "1" }
+  arDismissPage()
+  msg_1(scGet("panel"), "setHidden:", 0)
+  if scGet("task") == 0 { scRefresh(0, 0, 0) }
+  scSet("chainpush", cocoaNumber(push))
+  if push == 1 { scMessage("Type a message. Commit & Push commits staged files, then pushes.") }
+  else { scMessage("Type a message. Only staged files are committed.") }
+  msg_1(scGet("commit"), "setStringValue:", nsString(""))
+  cocoaMakeFirstResponder(cocoaGetAssocKey(appH(), "brain.win"), scGet("commit"))
+  emit "1"
+}
+func scQuickCommit(self, cmd, sender) { scFocusCommit(0)  emit "1" }
+func scQuickCommitPush(self, cmd, sender) { scFocusCommit(1)  emit "1" }
+func scPushNow(self, cmd, sender) {
+  if scGet("root") == 0 { scMessage("Open a Git repository first.")  emit "1" }
+  let args = scArgs()  scArg(args, "push")
+  scGit(args, "push")  emit "1"
+}
+func onRefreshGitStatus(self, cmd, sender) {
+  gsRefresh(1)
+  scMessage("Refreshing Git file status…")
+  emit "1"
+}
 func scNetwork(self, cmd, sender) {
   if scGet("root") == 0 { scMessage("Open a Git repository first.")  emit "1" }
   let mode = msg(cocoaGetAssocKey(sender, "sc.action"), "UTF8String")
   if mode == "pull" { if scCleanEditors() == 0 { emit "1" } }
+  if mode == "push" { scPushNow(0, 0, 0)  emit "1" }
   let args = scArgs()  scArg(args, mode)
   if mode == "pull" { scArg(args, "--ff-only") }
   scGit(args, mode)  emit "1"
@@ -494,9 +521,19 @@ func scPoll() {
     emit "1"
   }
   if status != 0 {
+    scSet("chainpush", cocoaNumber(0))
     scDisplay(msg(output, "UTF8String"))  scMessage(mode + " failed (" + status + "). See details.")  emit "1"
   }
-  if mode == "commit" { msg_1(scGet("commit"), "setStringValue:", nsString("")) }
+  if mode == "commit" {
+    msg_1(scGet("commit"), "setStringValue:", nsString(""))
+    if cocoaNumberVal(scGet("chainpush")) == 1 {
+      scSet("chainpush", cocoaNumber(0))
+      scDisplay(msg(output, "UTF8String"))
+      scMessage("Commit complete — pushing…")
+      scPushNow(0, 0, 0)
+      emit "1"
+    }
+  }
   if mode == "checkout" || mode == "pull" { scReloadEditors() }
   if mode == "clone" { loadFolder(scText("clonetarget"))  scRefresh(0, 0, 0)  emit "1" }
   scDisplay(msg(output, "UTF8String"))
@@ -580,11 +617,12 @@ func scInstall(win, parent) {
   scButton(win, doc, "Open", 196, 482, 80, funcptr(scOpenFile), "open", "", 0)
   scButton(win, doc, "Working Diff", 292, 482, 120, funcptr(scWorkingDiff), "workingdiff", "", 0)
   scButton(win, doc, "Staged Diff", 424, 482, 120, funcptr(scStagedDiff), "stageddiff", "", 0)
-  let commit = cocoaTextField(win, 16, 526, 644, 48)
-  moveView(commit, doc, 16, 526, 644, 48, 2)
+  let commit = cocoaTextField(win, 16, 526, 500, 48)
+  moveView(commit, doc, 16, 526, 500, 48, 2)
   msg_1(commit, "setPlaceholderString:", nsString("Commit message — staged changes only"))
   scSet("commit", commit)
-  scButton(win, doc, "Commit Staged", 672, 536, 138, funcptr(scCommit), "commit", "", 1)
+  scButton(win, doc, "Commit", 524, 536, 120, funcptr(scCommit), "commit", "", 1)
+  scButton(win, doc, "Commit & Push", 652, 536, 158, funcptr(scCommitPush), "commitpush", "", 1)
   scSet("message", scLabel(win, doc, "Ready", 16, 590, 684, 28, 2))
   scButton(win, doc, "Cancel", 714, 588, 96, funcptr(scCancel), "cancel", "", 1)
   emit "1"

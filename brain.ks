@@ -2,6 +2,7 @@
 import "k:cocoa"
 import "scripts/tooling.k"
 import "source_control.k"
+import "git_status.k"
 import "extensions.k"
 import "command_center.k"
 import "find_panel.k"
@@ -1968,8 +1969,12 @@ func outlineExpandable(self, cmd, outline, item) { emit cocoaNumberVal(msg_1(ite
 func outlineValue(self, cmd, outline, column, item) { emit msg_1(item, "objectForKey:", nsString("name")) }
 func outlineCell(self, cmd, outline, cell, column, item) {
   let name = msg_1(item, "objectForKey:", nsString("name"))
+  let directory = cocoaNumberVal(msg_1(item, "objectForKey:", nsString("directory")))
   let image = "NSMultipleDocuments"
-  if cocoaNumberVal(msg_1(item, "objectForKey:", nsString("directory"))) == 1 { image = "NSFolder" }
+  if directory == 1 { image = "NSFolder" }
+  let state = gsState(msg(msg_1(item, "objectForKey:", nsString("path")), "UTF8String"))
+  let label = name
+  if state > 0 && directory == 0 { label = msg_1(name, "stringByAppendingString:", nsString("  " + gsBadge(state))) }
   msg_1(cell, "setLeaf:", 1)
   let icon = msg(msg_1(cls("NSImage"), "imageNamed:", nsString(image)), "copy")
   msg_d2(icon, "setSize:", 16, 16)
@@ -1977,8 +1982,8 @@ func outlineCell(self, cmd, outline, cell, column, item) {
   msg(icon, "release")
   let font = msg_d1(cls("NSFont"), "systemFontOfSize:", 13)
   msg_1(cell, "setFont:", font)
-  let attrs = cocoaTextAttrs(font, themeText())
-  let title = msg_2(msg(cls("NSAttributedString"), "alloc"), "initWithString:attributes:", name, attrs)
+  let attrs = cocoaTextAttrs(font, gsColor(state))
+  let title = msg_2(msg(cls("NSAttributedString"), "alloc"), "initWithString:attributes:", label, attrs)
   msg_1(cell, "setAttributedStringValue:", title)
   msg(title, "release")
   emit "1"
@@ -2078,6 +2083,8 @@ func loadFolder(d) {
   cocoaSetAssocKey(ds, "root", root)
   cocoaSetAssocKey(ds, "dir", nsString(d))
   cocoaSetAssocKey(app, "brain.dir", nsString(d))
+  gsReset()
+  gsRefresh(1)
   scWorkspaceChanged()
   ccTitle()
   pickerClose()
@@ -2205,6 +2212,7 @@ func onSaveAs(self, cmd, sender) {
   cocoaArraySet(paths, idx, nsString(path))
   cocoaSetAssocKey(cocoaArrayGet(cocoaGetAssocKey(app, "brain.tabundos"), idx), "brain.untitled", cocoaNumber(0))
   cocoaArraySet(cocoaGetAssocKey(app, "brain.savedtexts"), idx, text)
+  gsRefresh(0)
   cocoaSetAssocKey(app, "brain.curpath", cocoaArrayGet(paths, idx))
   cocoaSetAssocKey(app, "brain.displayedpath", cocoaArrayGet(paths, idx))
   cocoaSetAssocKey(app, "brain.lang", nsString(extOf(path)))
@@ -2763,6 +2771,8 @@ func editorRegressionTests() {
   regressionAssert(indexOf(gridRender(terminalState, 8, 2), "MAIN 🦋") >= 0, "Stem shrink retains visible text")
   kp("PASS: Stem grid resize, alternate screen, bracketed paste, Unicode")
   let app = cocoaInit()
+  gitStatusRegression()
+  kp("PASS: Git Explorer decorations parse modified, untracked, ignored, and renamed paths")
   let win = cocoaWindow(app, "Regression", 600, 400)
   let editor = allocInit("NSTextView")
   cocoaSetAssocKey(app, "brain.win", win)
@@ -3198,6 +3208,12 @@ just run {
   if storeEdition() == 0 {
     let gitMenu = cocoaMenuAdd(bar, "GitHub")
     cocoaMenuItem(gitMenu, "Source Control", "", funcptr(onSourceControl))
+    cocoaMenuSeparator(gitMenu)
+    cocoaMenuItem(gitMenu, "Commit Staged…", "", funcptr(scQuickCommit))
+    cocoaMenuItem(gitMenu, "Commit and Push…", "", funcptr(scQuickCommitPush))
+    cocoaMenuItem(gitMenu, "Push", "", funcptr(scPushNow))
+    cocoaMenuItem(gitMenu, "Refresh File Status", "", funcptr(onRefreshGitStatus))
+    cocoaMenuSeparator(gitMenu)
     cocoaMenuItem(gitMenu, "Sign In", "", funcptr(scAuthenticate))
     cocoaMenuItem(gitMenu, "Refresh", "", funcptr(scRefreshAccount))
     let runMenu = cocoaMenuAdd(bar, "Run")
@@ -3220,6 +3236,7 @@ just run {
   cocoaMakeFirstResponder(win, editor)
   cocoaFinishLaunching(app)
   if storeEdition() == 0 { scAccount() }
+  gsRefresh(1)
 
   // manual loop: pump UI events + stream the pty into the terminal grid
   let ts = msg(term, "textStorage")
@@ -3239,6 +3256,7 @@ just run {
     pollTask()
     scPoll()
     exPoll()
+    gsTick()
     ccPoll()
     let redraw = 0
     if m >= 0 && brainFlag("brain.terminal", 0) == 1 {

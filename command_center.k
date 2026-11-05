@@ -200,7 +200,7 @@ func ccCandidates() {
 }
 func ccCommands() {
   let names = "File: New Text File|File: New Krypton File|File: New Window|File: Open File|File: Open Folder|File: Open Workspace|File: Save Workspace As|File: Duplicate Workspace|File: Save|File: Save As|File: Save All|File: Revert File|File: Close Editor|File: Close Window|Edit: Undo|Edit: Redo|Edit: Cut|Edit: Copy|Edit: Paste|Edit: Select All|Edit: Find|Edit: Find Next|Edit: Find Previous|Edit: Find and Replace|View: Code|View: Explore|View: History|View: Security|View: Intelligence|View: Extensions|View: Toggle Sidebar|View: Toggle File Info|View: Zoom In|View: Zoom Out|View: Reset Zoom|Go: Quick Open|Go: Go to Line|Go: Symbol in File|Go: Symbol in Workspace|Go: Back|Go: Forward|Search: Quick Search|Extensions: Manage Extensions|Extensions: Add Extension from VSIX"
-  if storeEdition() == 0 { names = names + "|View: Toggle Terminal|Run: Build File|Run: Run File|Run: Stop|GitHub: Source Control|GitHub: Sign In|GitHub: Refresh" }
+  if storeEdition() == 0 { names = names + "|View: Toggle Terminal|Run: Build File|Run: Run File|Run: Stop|Git: Commit Staged…|Git: Commit and Push…|Git: Push|Git: Refresh File Status|GitHub: Source Control|GitHub: Sign In|GitHub: Refresh" }
   emit msg_1(nsString(names), "componentsSeparatedByString:", nsString("|"))
 }
 func ccRunCommand(name) {
@@ -254,6 +254,10 @@ func ccRunCommand(name) {
   if name == "Run: Build File" { onBuild(0, 0, 0) }
   if name == "Run: Run File" { onRun(0, 0, 0) }
   if name == "Run: Stop" { onStopTask(0, 0, 0) }
+  if name == "Git: Commit Staged…" { scQuickCommit(0, 0, 0) }
+  if name == "Git: Commit and Push…" { scQuickCommitPush(0, 0, 0) }
+  if name == "Git: Push" { scPushNow(0, 0, 0) }
+  if name == "Git: Refresh File Status" { onRefreshGitStatus(0, 0, 0) }
   if name == "GitHub: Source Control" { onSourceControl(0, 0, 0) }
   if name == "GitHub: Sign In" { scAuthenticate(0, 0, 0) }
   if name == "GitHub: Refresh" { scRefreshAccount(0, 0, 0) }

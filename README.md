@@ -47,7 +47,9 @@ restarting the shell; the panel’s × button hides it too. Terminal text suppor
 selection/copy and ⌘V paste, including bracketed paste for terminal applications.
 Resizing the window or divider updates the shell’s rows and columns while
 preserving screen contents and terminal modes. Long lines scroll horizontally so gutter numbers stay
-aligned. Explorer expands folders lazily and shows nested files. Quick Open (⌘P) searches
+aligned. Explorer expands folders lazily and shows nested files, with Git status letter
+badges and colours for modified, untracked, and ignored entries (folders are
+tinted when changes exist below them). Quick Open (⌘P) searches
 project paths; Command Palette (⌘⇧P) searches editor actions. New Text File
 uses ⌘N. Both pickers support Enter, Escape, and arrow keys.
 
@@ -56,7 +58,10 @@ at the bottom of Explorer starts browser sign-in or opens Source Control when
 signed in. Install GitHub CLI (`gh`) to connect an account; an existing login is
 reused, with credentials managed by GitHub CLI. Source Control shows changed files,
 colored working/staged diffs, staging, staged-only commits, branches, fetch, push,
-and fast-forward pull. Clone accepts a GitHub OWNER/REPO or HTTPS repository URL.
+and fast-forward pull. Use **Git: Commit Staged…** or **Git: Commit and Push…**
+from the command palette or GitHub menu, or the **Commit** / **Commit & Push**
+buttons in Source Control. Commit & Push commits
+staged files and pushes the branch as soon as the commit succeeds. Clone accepts a GitHub OWNER/REPO or HTTPS repository URL.
 Repository, Pull Requests, and Issues open the corresponding GitHub browser pages.
 Git operations run in the background and can be cancelled. Save modified editor
 buffers before switching branches or pulling.
