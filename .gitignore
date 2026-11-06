@@ -356,3 +356,4 @@ dist/brain-store.app/
 
 dist/brain-app-store.pkg
 .DS_Store
+dist/.DS_Store
