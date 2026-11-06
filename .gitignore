@@ -1,5 +1,5 @@
 .DS_STORE
-
+dist/
 _Chutzpah*
 _NCrunch_*
 _pkginfo.txt
@@ -350,10 +350,3 @@ UpgradeLog*.XML
 
 # Objective K build output
 brain.app/
-dist/brain.app/
-
-dist/brain-store.app/
-
-dist/brain-app-store.pkg
-.DS_Store
-dist/.DS_Store
