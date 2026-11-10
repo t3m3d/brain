@@ -7,13 +7,13 @@ func buildStore() { buildEdition(1) }
 func buildEdition(store) {
     let root = repoRoot()
     let krypton = kryptonRoot()
-    if sh("uname -s") != "Darwin" { kp("brain.app requires macOS.")  exit(1) }
+    if sh("uname -s") != "Darwin" { print("brain.app requires macOS.")  exit(1) }
     if shOk("test -d " + quoteArg(krypton + "/stdlib")) != "1" {
-        kp("Set KRYPTON to a Krypton checkout.")  exit(1)
+        print("Set KRYPTON to a Krypton checkout.")  exit(1)
     }
     // Assemble in a unique staging directory; preserve the previous app on failure.
     let stage = sh("mktemp -d /tmp/brain-build.XXXXXX")
-    if stage == "" { kp("Could not create build staging directory.")  exit(1) }
+    if stage == "" { print("Could not create build staging directory.")  exit(1) }
     let app = stage + "/brain.app"
     checked("mkdir -p " + quoteArg(app + "/Contents/MacOS") + " " + quoteArg(app + "/Contents/Resources"))
     checked("env KRYPTON_ROOT=" + quoteArg(krypton) + " kcc --native " + quoteArg(root + "/brain.ks") + " -o " + quoteArg(app + "/Contents/MacOS/brain"))
@@ -62,6 +62,6 @@ func buildEdition(store) {
     checked("codesign --verify --strict " + quoteArg(app))
     checked("rm -rf " + quoteArg(destination) + " && cp -R " + quoteArg(app) + " " + quoteArg(destination))
     checked("rm -rf " + quoteArg(stage))
-    if store == 1 { kp("Built sandboxed dist/brain-store.app (ad-hoc test build; not submission-ready)") }
-    else { kp("Built brain.app — open brain.app") }
+    if store == 1 { print("Built sandboxed dist/brain-store.app (ad-hoc test build; not submission-ready)") }
+    else { print("Built brain.app — open brain.app") }
 }

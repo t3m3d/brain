@@ -7,16 +7,16 @@ just run {
     b = bufInsertChar(b, "i")
     b = bufInsertNewline(b)
     b = bufInsertChar(b, "x")
-    kp("text=[" + envGet(b, "text") + "]")
-    kp("row=" + envGet(b, "row") + " col=" + envGet(b, "col") + " lines=" + bufNumLines(b))
+    print("text=[" + envGet(b, "text") + "]")
+    print("row=" + envGet(b, "row") + " col=" + envGet(b, "col") + " lines=" + bufNumLines(b))
 
     b = bufBackspace(b)
-    kp("after bs: text=[" + envGet(b, "text") + "] row=" + envGet(b, "row") + " col=" + envGet(b, "col"))
+    print("after bs: text=[" + envGet(b, "text") + "] row=" + envGet(b, "row") + " col=" + envGet(b, "col"))
 
     b = bufUndo(b)
-    kp("undo: text=[" + envGet(b, "text") + "]")
+    print("undo: text=[" + envGet(b, "text") + "]")
     b = bufUndo(b)
-    kp("undo2: text=[" + envGet(b, "text") + "]")
+    print("undo2: text=[" + envGet(b, "text") + "]")
     b = bufRedo(b)
-    kp("redo: text=[" + envGet(b, "text") + "]")
+    print("redo: text=[" + envGet(b, "text") + "]")
 }

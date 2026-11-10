@@ -768,8 +768,8 @@ func sourceControlRegression() {
   msg(sender, "release")
   cocoaSetAssocKey(appH(), "brain.dir", previous)  msg(previous, "release")
   scSet("root", 0)  scSet("branches", 0)  scSet("message", 0)
-  kp("PASS: Git fetch, fast-forward pull, push, branch selection, completed status against local origin")
+  print("PASS: Git fetch, fast-forward pull, push, branch selection, completed status against local origin")
   msg_2(fm, "removeItemAtPath:error:", nsString(directory), 0)
-  kp("PASS: Git status paths, staging, unborn unstage, staged-only commit, rename, branches, clone validation")
+  print("PASS: Git status paths, staging, unborn unstage, staged-only commit, rename, branches, clone validation")
   emit "1"
 }

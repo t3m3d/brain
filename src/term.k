@@ -242,6 +242,6 @@ func kcodeMain() {
     e = _setMsg(e, "kcode — Ctrl-Q quit · Ctrl-S save · Ctrl-B build · Tab tree", "")
     e = edRun(e)
     tRestore()
-    kp("")
+    print("")
     emit "1"
 }

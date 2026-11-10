@@ -17,9 +17,9 @@ func checked(command) {
     // Capture diagnostics and a status marker together; exec returns stdout only.
     let out = exec("( " + command + " ) 2>&1; result=$?; printf '\n__KCODE_STATUS_%s' \"$result\"")
     let marker = indexOf(out, "\n__KCODE_STATUS_")
-    if marker < 0 { kp(out)  exit(1) }
+    if marker < 0 { print(out)  exit(1) }
     let message = substring(out, 0, marker)
-    if len(message) > 0 { kp(message) }
+    if len(message) > 0 { print(message) }
     let status = substring(out, marker + 16, len(out))
     if status != "0" { exit(toInt(status)) }
     emit "1"
@@ -28,7 +28,7 @@ func repoRoot() {
     let root = env("KCODE_ROOT")
     if root == "" { root = sh("pwd") }
     if shOk("test -f " + quoteArg(root + "/brain.ks")) != "1" {
-        kp("Run from the kcode checkout, or set KCODE_ROOT to it.")
+        print("Run from the kcode checkout, or set KCODE_ROOT to it.")
         exit(1)
     }
     emit root

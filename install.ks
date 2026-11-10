@@ -12,5 +12,5 @@ just run {
     }
     checked("mkdir -p " + quoteArg(destination))
     checked("ditto " + quoteArg(root + "/brain.app") + " " + quoteArg(destination + "/brain.app"))
-    kp("Installed " + destination + "/brain.app")
+    print("Installed " + destination + "/brain.app")
 }

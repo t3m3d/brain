@@ -8,5 +8,5 @@ just run {
     buildBrain()
     checked("mkdir -p " + quoteArg(root + "/dist"))
     checked("rm -rf " + quoteArg(root + "/dist/brain.app") + " && cp -R " + quoteArg(root + "/brain.app") + " " + quoteArg(root + "/dist/brain.app"))
-    kp("Built dist/brain.app")
+    print("Built dist/brain.app")
 }

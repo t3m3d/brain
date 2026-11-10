@@ -2754,7 +2754,7 @@ func storeEdition() {
   emit msg(msg_1(info, "objectForKey:", nsString("BrainStoreEdition")), "boolValue")
 }
 func regressionAssert(ok, message) {
-  if ok == 0 { kp("FAIL: " + message)  exit(1) }
+  if ok == 0 { print("FAIL: " + message)  exit(1) }
   emit "1"
 }
 // Native regression mode uses the same document functions as the application.
@@ -2769,10 +2769,10 @@ func editorRegressionTests() {
   regressionAssert(indexOf(gridRender(terminalState, 18, 5), "MAIN 🦋") >= 0, "Stem resize retains main screen and Unicode")
   terminalState = stemResizeGrid(terminalState, 18, 5, 8, 2)
   regressionAssert(indexOf(gridRender(terminalState, 8, 2), "MAIN 🦋") >= 0, "Stem shrink retains visible text")
-  kp("PASS: Stem grid resize, alternate screen, bracketed paste, Unicode")
+  print("PASS: Stem grid resize, alternate screen, bracketed paste, Unicode")
   let app = cocoaInit()
   gitStatusRegression()
-  kp("PASS: Git Explorer decorations parse modified, untracked, ignored, and renamed paths")
+  print("PASS: Git Explorer decorations parse modified, untracked, ignored, and renamed paths")
   let win = cocoaWindow(app, "Regression", 600, 400)
   let editor = allocInit("NSTextView")
   cocoaSetAssocKey(app, "brain.win", win)
@@ -2849,7 +2849,7 @@ func editorRegressionTests() {
   regressionAssert(cocoaGetAssocKey(app, "brain.promptwindow") == 0, "prompt state cleared")
   msg(orderingAlert, "release")
   msg_1(win, "orderOut:", 0)
-  kp("PASS: modal prompt ordering, activation focus, prompt cleanup")
+  print("PASS: modal prompt ordering, activation focus, prompt cleanup")
   // Opening through a symlink alias must reuse the existing document.
   regressionAssert(scopeContains("/private/tmp/project", "/tmp/project/nested/file.txt") == 1, "folder grants include descendants")
   regressionAssert(scopeContains("/tmp/project", "/tmp/project-other/file.txt") == 0, "folder grants require a path boundary")
@@ -2902,7 +2902,7 @@ func editorRegressionTests() {
   regressionAssert(msg(tree, "numberOfRows") == 1, "workspace root collapses")
   msg_1(tree, "setDataSource:", 0)
   msg(treeData, "release")
-  kp("PASS: stable explorer identity, repeated folder expansion/collapse, root collapse")
+  print("PASS: stable explorer identity, repeated folder expansion/collapse, root collapse")
   cocoaSetAssocKey(app, "brain.dir", nsString(pickerRoot))
   pickerOpen(0)
   regressionAssert(cocoaArrayCount(cocoaGetAssocKey(app, "brain.picker.source")) == 2, "picker indexes nested files")
@@ -2917,13 +2917,13 @@ func editorRegressionTests() {
   pickerFilter()
   regressionAssert(cocoaArrayCount(cocoaGetAssocKey(app, "brain.picker.results")) == 1, "command filtering")
   regressionAssert(pickerCommand(0, 0, input, 0, sel("cancelOperation:")) == 1, "picker handles Escape")
-  kp("PASS: canonical path identity, binary rejection, Quick Open, Command Palette, picker keyboard controls")
+  print("PASS: canonical path identity, binary rejection, Quick Open, Command Palette, picker keyboard controls")
 
   findRegression(win)
   infoRegression()
   commandCenterRegression(pickerRoot)
   sourceControlRegression()
-  kp("PASS: tab isolation, background close, unique identity, undo isolation, switch guard, Unicode highlighting, atomic save, path lifetime")
+  print("PASS: tab isolation, background close, unique identity, undo isolation, switch guard, Unicode highlighting, atomic save, path lifetime")
   emit "1"
 }
 
